@@ -1,0 +1,157 @@
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { ToolCallCard, ToolCallDetailBody } from "../ToolCallCard";
+import type { ToolCallView } from "@/stores/session-store";
+
+const orgApi = vi.hoisted(() => ({
+  orgFetchDocument: vi.fn(),
+  orgQaFeedback: vi.fn(),
+}));
+
+vi.mock("@/lib/org-client", () => orgApi);
+
+const base: ToolCallView = {
+  toolCallId: "tc1",
+  title: "Write C:\\Users\\example\\hello.txt",
+  kind: "edit",
+  status: "completed",
+  content: [],
+};
+
+describe("ToolCallCard", () => {
+  beforeEach(() => {
+    orgApi.orgFetchDocument.mockReset();
+    orgApi.orgFetchDocument.mockResolvedValue({ text: "完整原文内容" });
+    orgApi.orgQaFeedback.mockReset();
+    orgApi.orgQaFeedback.mockResolvedValue(undefined);
+  });
+
+  it("renders compact row and opens detail on click", () => {
+    const onOpen = vi.fn();
+    render(<ToolCallCard tc={base} onOpen={onOpen} />);
+    // edit 属专用渲染器,kind 标签显示为「✏️ 文件编辑」。
+    expect(screen.getByText("✏️ 文件编辑")).toBeInTheDocument();
+    expect(screen.getByText(/hello\.txt/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button"));
+    expect(onOpen).toHaveBeenCalledWith(base);
+  });
+
+  it("专用渲染器(send-message)显示图标 + 标签 + 摘要", () => {
+    render(
+      <ToolCallCard
+        tc={{
+          ...base,
+          kind: "send_message",
+          title: "通知",
+          rawInput: { message: "你好,这是一条通知" },
+        }}
+        onOpen={() => {}}
+      />,
+    );
+    expect(screen.getByText("💬 发送消息")).toBeInTheDocument();
+    expect(screen.getByText("你好,这是一条通知")).toBeInTheDocument();
+  });
+
+  it("shows running status mark while in progress", () => {
+    render(
+      <ToolCallCard
+        tc={{ ...base, status: "in_progress", title: "Execute notepad" }}
+        onOpen={() => {}}
+      />,
+    );
+    expect(screen.getByText("…")).toBeInTheDocument();
+  });
+
+  it("工具图片只渲染有界的内联栅格数据", () => {
+    render(
+      <ToolCallDetailBody
+        tc={{
+          ...base,
+          content: [{ type: "image", mimeType: "image/png", data: "AAAA", uri: "https://tracker.invalid/pixel" }],
+        }}
+      />,
+    );
+    expect(screen.getByRole("img")).toHaveAttribute("src", "data:image/png;base64,AAAA");
+    expect(screen.getByRole("img").getAttribute("src")).not.toContain("tracker.invalid");
+  });
+
+  it("拦截远程、SVG 或无效工具图片", () => {
+    render(
+      <ToolCallDetailBody
+        tc={{
+          ...base,
+          content: [{ type: "image", mimeType: "image/svg+xml", data: "PHN2Zz4=", uri: "http://127.0.0.1/private" }],
+        }}
+      />,
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("已拦截不安全");
+  });
+
+  it("组织上下文按证据与经验卡片展示而不是原始 JSON", () => {
+    render(
+      <ToolCallDetailBody
+        tc={{
+          ...base,
+          kind: "echoagent_organization_memory__knowledge_context",
+          title: "读取组织上下文",
+          content: [{ type: "text", text: JSON.stringify({
+            sufficient: false,
+            confidence: 0.62,
+            missingFacts: ["确认当前生效版本"],
+            memories: [{ id: "m1", kind: "pitfall", content: "不要跳过灰度验证", stale: false }],
+            evidence: [{ chunkId: "c1", docTitle: "发布规范", text: "所有发布必须先灰度。", citation: { heading: "上线流程", page: 3 } }],
+          }) }],
+        }}
+      />,
+    );
+    expect(screen.getByText("证据有缺口")).toBeInTheDocument();
+    expect(screen.getByText("不要跳过灰度验证")).toBeInTheDocument();
+    expect(screen.getByText("发布规范")).toBeInTheDocument();
+    expect(screen.queryByText(/\"sufficient\"/)).not.toBeInTheDocument();
+  });
+
+  it("组织能力静默降级时不在对话中显示工具卡片", () => {
+    const { container } = render(
+      <ToolCallCard
+        tc={{
+          ...base,
+          kind: "echoagent_organization_memory__knowledge_context",
+          title: "读取组织上下文",
+          content: [{ type: "text", text: JSON.stringify({ available: false, skipped: true }) }],
+        }}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("组织知识回答可查看引用原文并提交反馈", async () => {
+    render(
+      <ToolCallDetailBody
+        tc={{
+          ...base,
+          kind: "echoagent_organization_memory__knowledge_ask",
+          title: "查询组织知识",
+          content: [{ type: "text", text: JSON.stringify({
+            answer: "必须先进行灰度验证。",
+            qa_event_id: "qa-1",
+            citations: [{
+              doc_id: "doc-1",
+              docTitle: "发布规范",
+              quote: "所有发布必须先灰度。",
+              citation: { heading: "上线流程", page: 3 },
+            }],
+          }) }],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原文" }));
+    await waitFor(() => expect(orgApi.orgFetchDocument).toHaveBeenCalledWith("doc-1", 3));
+    expect(await screen.findByText("完整原文内容")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "有帮助" }));
+    await waitFor(() => expect(orgApi.orgQaFeedback).toHaveBeenCalledWith("qa-1", "helpful"));
+    expect(screen.getByText("感谢反馈，已记录")).toBeInTheDocument();
+  });
+});

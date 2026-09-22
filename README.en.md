@@ -106,6 +106,24 @@ echo-agent dashboard build  # Build the web Dashboard bundle (on demand, for sou
 
 For every subcommand and flag see the [CLI reference](https://fuyuxiang.github.io/echo-agent/en/reference/cli/); for every configuration option see the [configuration reference](https://fuyuxiang.github.io/echo-agent/en/reference/configuration/).
 
+### Desktop client
+
+`client/` is a self-contained Tauri 2 desktop application: React and TypeScript provide the UI, while Rust provides local capabilities and the in-process Agent runtime. The runtime source is vendored under `client/vendor/`, so building the client does not require building the Python package first or deploying a separate Gateway. The app includes conversations and projects, a coding workspace, knowledge bases, skills and connectors, scheduled automations, and controlled Browser Use / Computer Use.
+
+<div align="center">
+  <img src="client/docs/images/echoagent-home.png" alt="EchoAgent desktop client" width="820" />
+</div>
+
+Local development requires Node.js, pnpm, stable Rust (minimum 1.92), and `protoc`. macOS also needs the Xcode Command Line Tools; Windows needs the "Desktop development with C++" workload from Visual Studio 2022.
+
+```bash
+cd client
+pnpm install
+pnpm tauri dev
+```
+
+Use `pnpm test` for frontend tests and `pnpm build` for the TypeScript check plus the production frontend build. Once platform signing is configured, `pnpm dist` builds an installer for the current platform; the release scripts currently cover Windows x86_64 and both Apple Silicon and Intel macOS. See [client/docs/release-workflow.md](client/docs/release-workflow.md) for the release flow and [client/docs/automation-platform-support.md](client/docs/automation-platform-support.md) for desktop automation platform and security boundaries.
+
 ### Running as a background service
 
 Both `echo-agent run` and `echo-agent gateway` are foreground processes — they exit when the terminal closes. For a 24/7 resident agent, register the gateway as a system service (a user-level LaunchAgent on macOS, a user-level systemd unit on Linux; no root required, auto-start at login, auto-restart on crash):

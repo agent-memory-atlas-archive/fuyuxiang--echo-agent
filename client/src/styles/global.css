@@ -1,0 +1,76 @@
+/*
+ * EchoAgent global stylesheet.
+ *
+ * The base reset / body / scrollbar rules live inline in index.html (ported
+ * from echo-agent/renderer/index.html). Design tokens (--echo-*) are loaded
+ * here from tokens.css so any ported EchoAgent component resolves against
+ * the real palette rather than the VS Code fallbacks.
+ *
+ * Import order matters: tokens first, then app-level aliases.
+ */
+@import "./tokens.css";
+
+/* Foundation Icon base (ported from EchoAgent agent-ui). */
+.echo-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.echo-icon--spin {
+  animation: echo-icon-spin 1.2s linear infinite;
+  transform-origin: center;
+}
+@keyframes echo-icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* themable monochrome brand assets: invert under dark theme. */
+.echo-icon--themable {
+  filter: none;
+  transition: filter var(--echo-motion-duration-fast, 160ms)
+    var(--echo-motion-easing-standard, ease);
+}
+.dark .echo-icon--themable,
+[data-theme="dark"] .echo-icon--themable,
+.echo-theme--dark .echo-icon--themable {
+  filter: brightness(0) invert(1);
+}
+
+/*
+ * Compatibility aliases used by migrated components. The canonical surface,
+ * text and border values live in tokens.css; aliases here must only point to
+ * those values and must never redefine them per theme.
+ */
+:root {
+  color-scheme: light;
+  --echo-brand: var(--echo-brand-primary, #00c29a);
+  --echo-brand-hover: var(--echo-color-text-brand-hover, #40d1b3);
+  --echo-accent: var(--echo-brand);
+  --echo-color-primary: var(--echo-brand);
+  --echo-text-primary: var(--echo-text-strong);
+  --echo-text-secondary: var(--echo-text-medium);
+  --echo-text-light: var(--echo-text-weak);
+  --echo-text-brand: var(--echo-color-text-brand-default);
+  --echo-bg-elevated: var(--echo-bg-primary);
+  --echo-bg-input: var(--echo-bg-primary);
+  --echo-border: var(--echo-border-default);
+  --echo-border-soft: var(--echo-border-weak);
+  --echo-danger: var(--echo-status-error);
+  --echo-color-danger: var(--echo-status-error);
+  --echo-color-text-danger: var(--echo-color-text-error-default);
+  --echo-link: var(--echo-color-text-link-default);
+  --echo-status-success-soft: var(--echo-badge-success-bg);
+  --echo-font-family: var(
+    --vscode-font-family,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    "PingFang SC", "Microsoft YaHei", sans-serif
+  );
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+}

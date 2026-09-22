@@ -1,0 +1,95 @@
+# 更新日志 (Changelog)
+
+> 打包说明：发版时给对应 tag 提取本文件中该版本的段落作为 GitHub Release
+> 的正文（见 `.github/workflows/release.yml` 的「Extract release notes」
+> 步骤）。新版本 = 在顶部加一节 `## vX.Y.Z（日期）`，用中文写面向用户的
+> 变更摘要；技术细节留在 commit message。
+
+## 未发布
+
+### 🧱 Runtime 源码统一管理
+- 将 `vendor/echo-agent-build` 从外部 Git Submodule 转为主仓库直接管理的固定源码快照；普通克隆即可获得完整 Agent Runtime，不再依赖上游仓库在线可用。
+- 将既有兼容性修改和 `echo.agent` 协议命名空间结果固化进源码，同时保留上游版本、许可证、NOTICE 与后续升级流程。
+- 将 `async-openai` 和 `nucleo` 的锁定 Git 源码纳入 `vendor/`，改用仓库内 Path 依赖，新环境构建不再访问这两个 Git 仓库。
+- 初始化、macOS/Windows 打包和 Windows CI 改为校验 Vendored Runtime 完整性，不再隐式修改依赖源码。
+
+### ✨ EchoAgent 运行时命名与数据目录
+- 面向应用的命令、事件、模块和界面统一使用 EchoAgent / Agent Runtime 命名。
+- 用户配置、会话、记忆、Agents、Skills 等数据统一存放到 `~/.echo-agent/`。
+- 专家市场、连接器市场和内置技能目录统一跟随 `ECHO_AGENT_HOME`，并支持一键恢复默认来源。
+- 首次启动会从旧目录安全导入缺失文件：保留 `.echo-agent` 中已有内容、不删除旧目录，便于回滚。
+- 补充第三方许可说明，并在安装包中携带相关许可证文件。
+
+## v0.3.8（2026-08-25）
+
+### 🔧 内核升级
+- **Agent Runtime 升级到 c2ad97f8**（0.14 的 5163763 → 上游 6 个同步批次；`echo-agent-runtime` 维持 1.0.4）
+  - ACP 协议层（echo-agent-acp）零变化，EchoAgent 零适配直接通过编译与冒烟测试 —— 团队工具 MCP 化的红利
+  - 上游亮点：auth 刷新链重构（refresh_chain）、子代理并发采样限制、worktree 自动 GC 策略增强
+
+### 🖼️ 工具卡片支持图片输出
+- Runtime 读取图片 / PDF 文件时，工具卡片现在直接渲染图片（此前静默丢失为空白）
+- resource_link / 内嵌资源类输出降级为可读文本，不再无声丢弃；token 估算同步覆盖图片
+
+### 🗂️ 切换工作目录即时刷新侧栏
+- 在顶栏/Composer 切换工作空间后，立即加载该目录的会话列表并展开对应空间节点（此前需手动展开）
+- 切回收件箱目录时同步刷新任务分组
+
+### 🐛 修复
+- **任务列表勾选状态丢失**：rehype-sanitize 默认剥离 checkbox 的 `checked` 属性，导致 `- [x]` 与 `- [ ]` 渲染相同 —— 已在 sanitize 白名单放行（新增 markdown 渲染回归测试覆盖高亮/表格/任务列表/公式/安全）
+
+### ✅ 质量
+- 新增 14 个前端测试（markdown 渲染 8 例 + 工具内容归一化 6 例），全量 908 测试通过
+- Rust 冒烟测试（spawn → initialize → new_session → MCP 连接）在新内核上回归通过
+
+---
+
+## v0.14.0（2026-08-17）
+
+### 🔧 内核升级
+- **Agent Runtime 升级到 5163763**（`echo-agent-runtime` 1.0.0 → 1.0.4，上游 8 个同步批次）
+  - 新能力：ask_user_question 非交互模式优化、网页搜索域名过滤、工具协议帧扩展
+  - 适配：内存开关配置项合并（`memory_enabled_override`），语义完全兼容
+
+### 🏗️ 架构重构：团队工具零补丁化
+- `create_team` / `team_status` / `team_delete` 从「修改 Runtime 源码注入」迁移到**内嵌 MCP 服务器**
+  （标准协议、监听本机 127.0.0.1），保持 Runtime 内核**零侵入**，后续升级无需重新应用团队工具补丁
+- 工具名称变为 `echoagent__create_team` 等（旧会话历史仍正常显示）
+- **团队数据持久化**到 `~/.echo-agent/echoagent-teams.json`：agent 崩溃重启、应用重启后团队不再丢失
+- 修复一个隐蔽的 Windows 网络问题（socket 未设非阻塞导致连接无响应）
+
+### 🍎 macOS 修复
+- **顶部标签栏区域现在可以拖动窗口、双击放大**（红绿灯右侧的标签条空白处）
+- 修复多个符号在 macOS 显示为方块/异常的问题（✓ ✗ ⏸ ⌄ ⌕ ▾ ● ○ ⚠ → 全部改为矢量图标/CSS 绘制）
+
+### ✅ 质量
+- 新增端到端冒烟测试：启动 → 握手 → 建会话 → MCP 连接全链路验证（后续升级可通过一条命令完成回归）
+- 全量测试通过：Rust 105+ 单测 / 前端 813 测试
+
+---
+
+## v0.13.0（2026-08-16）
+
+- 修复团队工具注入（两步注册：实现 + 启用集，模型可真正调用）
+- Agent Runtime 升级（0.2.120）
+- 子代理面板 / 网页搜索 GUI
+
+## v0.12.0（2026-08-10）
+
+- 修复工具/团队报错
+- 团队 GUI（TeamStatusView）
+
+## v0.11.0（2026-08-08）
+
+- 实时子代理运行时（live 进度面板）
+- BYOK 模型隔离（跳过 Runtime 内置模型，修复 401）
+- 错误提示 UX
+
+## v0.10.x（2026-08-06）
+
+- 统一 diff 视图 + 13 个 diff 算法测试
+
+## v0.9.0（2026-08-02）
+
+- 33 个占位图标全部落地（lucide-react）
+- UI 打磨 + 35+ 项功能差距关闭

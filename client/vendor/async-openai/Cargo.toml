@@ -1,0 +1,10 @@
+[workspace]
+# This vendored snapshot intentionally contains only the library and proc-macro
+# crates. Upstream examples are not shipped, so globbing `examples/*` makes
+# `cargo fmt` reject the workspace before it can check any source file.
+members = ["async-openai", "async-openai-macros"]
+default-members = ["async-openai", "async-openai-macros"]
+resolver = "2"
+
+[workspace.package]
+rust-version = "1.75"

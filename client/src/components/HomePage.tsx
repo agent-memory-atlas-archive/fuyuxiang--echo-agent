@@ -1,0 +1,221 @@
+import { useEffect, useRef, useState } from "react";
+import { Composer } from "./Composer";
+import type { ModelOption } from "./ModelSelector";
+import type { WorkspaceInfo } from "@/lib/agent-client";
+import type { AgentEntry } from "@/lib/types";
+import { useSessionsStore, HOME_DRAFT_KEY } from "@/stores/sessions-store";
+import { usePendingExpertStore } from "@/stores/pending-expert-store";
+import type { SlashCommandInvocation } from "@/lib/slash-commands";
+import { useWorkspaceMentions } from "@/lib/use-workspace-mentions";
+import {
+  automationCapabilities,
+  type AutomationCapabilities,
+  type AutomationMode,
+} from "@/lib/automation-client";
+
+/** EchoAgent 首页：单一任务入口。 */
+export function HomePage({
+  onSend,
+  streaming,
+  apiReady,
+  setupHint,
+  creatingSession,
+  sendError,
+  onOpenSettings,
+  onPlaceholder,
+  modelId,
+  models,
+  onModelChange,
+  cwd,
+  workspaces,
+  onSelectWorkspace,
+  onSelectExpert,
+  onNavigateConnectors,
+  onOpenKnowledgeBase,
+  onOpenOrganization,
+  commandRefreshKey,
+  onClientSlashCommand,
+  taskMode,
+  onTaskModeChange,
+}: {
+  onSend: (text: string, attachments?: string[]) => boolean | void | Promise<boolean | void>;
+  streaming: boolean;
+  apiReady: boolean;
+  setupHint?: string;
+  creatingSession?: boolean;
+  sendError?: string | null;
+  onOpenSettings: () => void;
+  onPlaceholder: (label: string) => void;
+  modelId?: string;
+  models?: ModelOption[];
+  onModelChange?: (id: string) => void;
+  cwd?: string;
+  workspaces?: WorkspaceInfo[];
+  onSelectWorkspace?: (cwd: string) => void;
+  onSelectExpert?: (agent: AgentEntry) => void;
+  onNavigateConnectors?: () => void;
+  onOpenKnowledgeBase?: () => void;
+  onOpenOrganization?: () => void;
+  commandRefreshKey?: number;
+  onClientSlashCommand?: (
+    invocation: SlashCommandInvocation,
+  ) => boolean | void | Promise<boolean | void>;
+  taskMode?: AutomationMode;
+  onTaskModeChange?: (mode: AutomationMode) => void;
+}) {
+  // 受控填充 Composer 的内容 + nonce（召唤专家后写入 quick prompt）。
+  const [externalText, setExternalText] = useState("");
+  const [externalTextNonce, setExternalTextNonce] = useState(0);
+  const [automationSupport, setAutomationSupport] = useState<AutomationCapabilities | null>(null);
+  // 首页草稿(哨兵 key):用户离开首页再回来,未发送的字还在。
+  const homeDraft = useSessionsStore((s) => s.drafts[HOME_DRAFT_KEY] ?? "");
+  const setDraft = useSessionsStore((s) => s.setDraft);
+  const mentionCandidates = useWorkspaceMentions(cwd);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    void automationCapabilities()
+      .then((support) => {
+        if (!disposed) setAutomationSupport(support);
+      })
+      .catch(() => {
+        // Storybook/browser previews have no Tauri backend. Session creation
+        // still performs the authoritative backend capability check.
+      });
+    return () => { disposed = true; };
+  }, []);
+
+  // Pending expert (set after "召唤" in the detail modal).
+  const pendingExpert = usePendingExpertStore((s) => s.expert);
+  const pendingHandledRef = useRef<string | null>(null);
+
+  // When a pending expert arrives with a quickPrompt, pre-fill the composer.
+  useEffect(() => {
+    if (!pendingExpert) {
+      // 已被 dismiss 或未召唤:重置处理记录,使再次召唤同一专家能重新预填。
+      pendingHandledRef.current = null;
+      return;
+    }
+    // Only auto-fill once per expert (avoid re-filling on store churn).
+    if (pendingHandledRef.current === pendingExpert.expertId) return;
+    pendingHandledRef.current = pendingExpert.expertId;
+    const currentDraft = useSessionsStore.getState().drafts[HOME_DRAFT_KEY] ?? "";
+    if (pendingExpert.quickPrompt && currentDraft.length === 0) {
+      fillComposer(pendingExpert.quickPrompt);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingExpert]);
+
+  /** Dismiss the active expert: clear pending store + drop pre-fill guard. */
+  const dismissPendingExpert = () => {
+    usePendingExpertStore.getState().clear();
+    pendingHandledRef.current = null;
+  };
+
+  /** 写入 Composer 并聚焦。 */
+  const fillComposer = (text: string) => {
+    setExternalText(text);
+    setExternalTextNonce((n) => n + 1);
+  };
+
+  return (
+    <div className="home">
+      <div className="home__inner">
+        <header className="home__header">
+          <h1 className="home__title">今天想完成什么？</h1>
+        </header>
+
+        <section className="home__composer-area">
+          {onTaskModeChange && (
+            <div className="home-mode-picker" aria-label="新任务模式">
+              <span>执行方式</span>
+              <div className="home-mode-picker__options">
+                {([
+                  ["default", "Agent", "对话、分析和文件任务"],
+                  ["browser_use", "Browser Use", "在隔离浏览器中完成网页任务"],
+                  ["computer_use", "Computer Use", "通过截图安全操作桌面"],
+                ] as const).map(([value, label, description]) => (
+                  (() => {
+                    const capability = value === "browser_use"
+                      ? automationSupport?.browser
+                      : value === "computer_use"
+                        ? automationSupport?.computer
+                        : null;
+                    const unavailable = capability?.available === false;
+                    return (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`home-mode-picker__option${(taskMode ?? "default") === value ? " home-mode-picker__option--active" : ""}`}
+                    aria-pressed={(taskMode ?? "default") === value}
+                    disabled={Boolean(creatingSession) || streaming || unavailable}
+                    title={unavailable ? capability?.reason || `${label} 当前不可用` : description}
+                    onClick={() => onTaskModeChange(value)}
+                  >
+                    {label}
+                  </button>
+                    );
+                  })()
+                ))}
+              </div>
+              {(taskMode === "browser_use" && automationSupport?.browser.available === false) && (
+                <small className="home-mode-picker__reason">{automationSupport.browser.reason || "当前设备无法使用 Browser Use"}</small>
+              )}
+              {(taskMode === "computer_use" && automationSupport?.computer.available === false) && (
+                <small className="home-mode-picker__reason">{automationSupport.computer.reason || "当前设备无法使用 Computer Use"}</small>
+              )}
+            </div>
+          )}
+          <Composer
+            streaming={streaming}
+            onSend={onSend}
+            onCancel={() => {}}
+            apiReady={apiReady}
+            setupHint={
+              setupHint ?? (models?.length
+                ? undefined
+                : "请先在「设置 → 模型」配置模型"
+              )
+            }
+            onOpenSettings={onOpenSettings}
+            onPlaceholder={onPlaceholder}
+            externalText={externalText}
+            externalTextNonce={externalTextNonce}
+            modelId={modelId}
+            models={models}
+            onModelChange={onModelChange}
+            cwd={cwd}
+            workspaces={workspaces}
+            onSelectWorkspace={onSelectWorkspace}
+            showMeta
+            draft={homeDraft}
+            draftKey={HOME_DRAFT_KEY}
+            onDraftChange={(t) => setDraft(HOME_DRAFT_KEY, t)}
+            onSelectExpert={onSelectExpert}
+            onNavigateConnectors={onNavigateConnectors}
+            onOpenKnowledgeBase={onOpenKnowledgeBase}
+            onOpenOrganization={onOpenOrganization}
+            commandRefreshKey={commandRefreshKey}
+            onClientSlashCommand={onClientSlashCommand}
+            filePaths={mentionCandidates.filePaths}
+            workspaceSymbols={mentionCandidates.workspaceSymbols}
+            activeExpertName={pendingExpert?.name}
+            activeExpertAvatar={pendingExpert?.avatarLocal}
+            onDismissExpert={dismissPendingExpert}
+          />
+          {creatingSession && (
+            <div className="home__send-status" role="status" aria-live="polite">
+              正在创建 Agent 会话…
+            </div>
+          )}
+          {!creatingSession && sendError && (
+            <div className="home__send-error" role="alert">
+              创建会话失败：{sendError}
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,529 @@
+import { create } from "zustand";
+import { projectsLoad, projectsSave } from "@/lib/agent-client";
+import type { SessionSummary } from "@/lib/types";
+
+/**
+ * 本地「项目」实体存储。Rust 后端私有数据目录是权威副本，
+ * localStorage 只作冷启动缓存与旧版数据迁移来源。每次变更都会原子写回后端。
+ */
+
+export interface RefItem {
+  id: string;
+  name: string;
+  iconUrl?: string;
+}
+
+/** 项目下的真实对话（EchoAgent 会话）。 */
+export interface ProjectConversation {
+  sessionId: string;
+  title: string;
+  createdAt: string;
+  /** Concrete local catalog model bound to this conversation. */
+  modelId?: string;
+  /** Mirrors the session sidecar flag so project links never open a hidden row. */
+  archived?: boolean;
+}
+
+export type PlanStatus = "pending" | "in_progress" | "paused" | "completed";
+
+export interface PlanCard {
+  id: string;
+  title: string;
+  status: PlanStatus;
+  source?: string;
+  /** Explicit model override. Missing means the project default is inherited until execution. */
+  modelId?: string;
+  /** Agent conversation created to execute this plan item. */
+  sessionId?: string;
+  sessionArchived?: boolean;
+}
+
+export interface TaskItem {
+  id: string;
+  title: string;
+  scope: "personal" | "shared";
+  source: string;
+  status: PlanStatus;
+  /** Explicit model override. Missing means the project default is inherited until execution. */
+  modelId?: string;
+  /** Agent conversation created to execute this task. */
+  sessionId?: string;
+  sessionArchived?: boolean;
+}
+
+export interface AssetItem {
+  id: string;
+  name: string;
+  kind: "folder" | "file";
+  ext?: string;
+  sizeLabel?: string;
+  updater?: string;
+  updatedAt?: string;
+  /** Canonical file copied into the project's private backend asset dir. */
+  path?: string;
+  sizeBytes?: number;
+}
+
+export interface ProjectMeta {
+  id: string;
+  name: string;
+  cwd?: string;
+  templateId?: string;
+  instructions?: string;
+  /** Preferred model for new project conversations, plans and tasks. */
+  defaultModelId?: string;
+  createdAt: string;
+  // 详情
+  connectors: RefItem[];
+  experts: RefItem[];
+  skills: RefItem[];
+  plans: PlanCard[];
+  tasks: TaskItem[];
+  assets: AssetItem[];
+  members: string[];
+  /** 项目下的真实对话（EchoAgent 会话列表），按创建时间倒序。 */
+  conversations: ProjectConversation[];
+}
+
+/** 计划看板列定义（对齐目标截图：待开始/进行中/暂停/完成）。 */
+export const PLAN_COLUMNS: { status: PlanStatus; label: string }[] = [
+  { status: "pending", label: "待开始" },
+  { status: "in_progress", label: "进行中" },
+  { status: "paused", label: "暂停" },
+  { status: "completed", label: "完成" },
+];
+
+const STORAGE_KEY = "echoagent.projects";
+const DIRTY_KEY = "echoagent.projects.pending-backend-sync";
+let persistChain: Promise<void> = Promise.resolve();
+let persistRevision = 0;
+
+/** 旧数据/外部数据补齐缺省详情字段，保证组件可直接读数组。 */
+function normalize(x: unknown): ProjectMeta | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Partial<ProjectMeta> & { id?: unknown; name?: unknown };
+  if (typeof o.id !== "string" || typeof o.name !== "string") return null;
+  return {
+    id: o.id,
+    name: o.name,
+    cwd: o.cwd,
+    templateId: o.templateId,
+    instructions: o.instructions,
+    defaultModelId: typeof o.defaultModelId === "string" ? o.defaultModelId : undefined,
+    createdAt: o.createdAt ?? new Date().toISOString(),
+    connectors: Array.isArray(o.connectors) ? o.connectors : [],
+    experts: Array.isArray(o.experts) ? o.experts : [],
+    skills: Array.isArray(o.skills) ? o.skills : [],
+    plans: Array.isArray(o.plans)
+      ? o.plans.map((item) => ({ ...item, status: item.status ?? "pending" }))
+      : [],
+    tasks: Array.isArray(o.tasks)
+      ? o.tasks.map((item) => ({ ...item, status: item.status ?? "pending" }))
+      : [],
+    assets: Array.isArray(o.assets) ? o.assets : [],
+    members: Array.isArray(o.members) ? o.members : [],
+    conversations: Array.isArray(o.conversations) ? o.conversations : [],
+  };
+}
+
+function load(): ProjectMeta[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.map(normalize).filter(Boolean) as ProjectMeta[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocal(list: ProjectMeta[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    /* quota / 隐私模式 — 静默降级为仅内存 */
+  }
+}
+
+function persist(list: ProjectMeta[]): void {
+  saveLocal(list);
+  try { window.localStorage.setItem(DIRTY_KEY, "1"); } catch { /* cache unavailable */ }
+  const revision = ++persistRevision;
+  useProjectsStore.setState({ persisting: true });
+  // Serialize snapshots so a slower old write can never overwrite a newer one.
+  persistChain = persistChain
+    .catch(() => {})
+    .then(() => projectsSave(list));
+  void persistChain.then(() => {
+    if (revision !== persistRevision) return;
+    try { window.localStorage.removeItem(DIRTY_KEY); } catch { /* cache unavailable */ }
+    useProjectsStore.setState({ persisting: false, persistError: null });
+  }).catch((error) => {
+    if (revision !== persistRevision) return;
+    useProjectsStore.setState({
+      persisting: false,
+      persistError: String(error).replace(/^Error:\s*/, ""),
+    });
+  });
+}
+
+const uid = (p: string) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+interface ProjectsState {
+  projects: ProjectMeta[];
+  persisting: boolean;
+  persistError: string | null;
+  retryPersist: () => void;
+  /** Sidebar → ProjectsPanel communication: when set, the panel auto-opens this project. */
+  activeProjectId: string | null;
+  setActiveProjectId: (id: string | null) => void;
+  add: (p: {
+    name: string;
+    cwd?: string;
+    templateId?: string;
+    instructions?: string;
+    defaultModelId?: string;
+    connectors?: RefItem[];
+    experts?: RefItem[];
+    skills?: RefItem[];
+  }) => ProjectMeta;
+  rename: (id: string, name: string) => void;
+  remove: (id: string) => void;
+  updateConfig: (
+    id: string,
+    patch: Partial<Pick<ProjectMeta, "instructions" | "defaultModelId" | "connectors" | "experts" | "skills">>,
+  ) => void;
+  addPlan: (id: string, title: string, status?: PlanStatus, modelId?: string) => void;
+  movePlan: (id: string, cardId: string, status: PlanStatus) => void;
+  setPlanModel: (id: string, cardId: string, modelId: string) => void;
+  linkPlanSession: (id: string, cardId: string, sessionId: string, modelId: string) => void;
+  removePlan: (id: string, cardId: string) => void;
+  addTask: (id: string, title: string, modelId?: string) => void;
+  moveTask: (id: string, taskId: string, status: PlanStatus) => void;
+  setTaskModel: (id: string, taskId: string, modelId: string) => void;
+  linkTaskSession: (id: string, taskId: string, sessionId: string, modelId: string) => void;
+  removeTask: (id: string, taskId: string) => void;
+  addAsset: (id: string, a: Pick<AssetItem, "name" | "kind"> & Partial<AssetItem>) => void;
+  addAssets: (id: string, assets: Array<Pick<AssetItem, "name" | "kind"> & Partial<AssetItem>>) => void;
+  removeAsset: (id: string, assetId: string) => void;
+  addMember: (id: string, name: string) => void;
+  addConversation: (id: string, conv: ProjectConversation) => void;
+  removeConversation: (id: string, sessionId: string) => void;
+  /** Remove a session from one project without deleting the underlying history. */
+  detachSessionFromProject: (id: string, sessionId: string) => void;
+  updateConversationTitle: (id: string, sessionId: string, title: string) => void;
+  /** Mirror archive state into every project reference to this session. */
+  setSessionArchived: (sessionId: string, archived: boolean) => void;
+  /** Repair duplicated project link flags from authoritative session rows. */
+  reconcileSessionArchiveStates: (
+    sessions: Array<Pick<SessionSummary, "sessionId" | "archived">>,
+  ) => void;
+  /** Remove deleted session links from conversations, plans and tasks. */
+  removeSessionReferences: (sessionId: string) => void;
+}
+
+export const useProjectsStore = create<ProjectsState>((set, get) => {
+  const patch = (id: string, fn: (p: ProjectMeta) => ProjectMeta) => {
+    const next = get().projects.map((p) => (p.id === id ? fn(p) : p));
+    set({ projects: next });
+    persist(next);
+  };
+  return {
+    projects: load(),
+    persisting: false,
+    persistError: null,
+    retryPersist: () => persist(get().projects),
+    activeProjectId: null,
+    setActiveProjectId: (id) => set({ activeProjectId: id }),
+    add: (p) => {
+      const item: ProjectMeta = {
+        id: uid("proj"),
+        name: p.name,
+        cwd: p.cwd || undefined,
+        templateId: p.templateId || undefined,
+        instructions: p.instructions || undefined,
+        defaultModelId: p.defaultModelId || undefined,
+        createdAt: new Date().toISOString(),
+        connectors: p.connectors ?? [],
+        experts: p.experts ?? [],
+        skills: p.skills ?? [],
+        plans: [],
+        tasks: [],
+        assets: [],
+        members: [],
+        conversations: [],
+      };
+      const next = [item, ...get().projects];
+      set({ projects: next });
+      persist(next);
+      return item;
+    },
+    rename: (id, name) => patch(id, (p) => ({ ...p, name })),
+    remove: (id) => {
+      const next = get().projects.filter((p) => p.id !== id);
+      set({ projects: next });
+      persist(next);
+    },
+    updateConfig: (id, cfg) => patch(id, (p) => ({ ...p, ...cfg })),
+    addPlan: (id, title, status = "pending", modelId) =>
+      patch(id, (p) => ({ ...p, plans: [...p.plans, { id: uid("plan"), title, status, modelId }] })),
+    movePlan: (id, cardId, status) =>
+      patch(id, (p) => ({
+        ...p,
+        plans: p.plans.map((c) => (c.id === cardId ? { ...c, status } : c)),
+      })),
+    setPlanModel: (id, cardId, modelId) =>
+      patch(id, (p) => ({
+        ...p,
+        plans: p.plans.map((card) => card.id === cardId ? { ...card, modelId } : card),
+      })),
+    linkPlanSession: (id, cardId, sessionId, modelId) =>
+      patch(id, (p) => ({
+        ...p,
+        plans: p.plans.map((card) => card.id === cardId ? { ...card, sessionId, modelId } : card),
+      })),
+    removePlan: (id, cardId) =>
+      patch(id, (p) => ({ ...p, plans: p.plans.filter((c) => c.id !== cardId) })),
+    addTask: (id, title, modelId) =>
+      patch(id, (p) => ({
+        ...p,
+        tasks: [
+          ...p.tasks,
+          { id: uid("task"), title, scope: "personal", source: "manual", status: "pending", modelId },
+        ],
+      })),
+    moveTask: (id, taskId, status) =>
+      patch(id, (p) => ({
+        ...p,
+        tasks: p.tasks.map((task) => task.id === taskId ? { ...task, status } : task),
+      })),
+    setTaskModel: (id, taskId, modelId) =>
+      patch(id, (p) => ({
+        ...p,
+        tasks: p.tasks.map((task) => task.id === taskId ? { ...task, modelId } : task),
+      })),
+    linkTaskSession: (id, taskId, sessionId, modelId) =>
+      patch(id, (p) => ({
+        ...p,
+        tasks: p.tasks.map((task) => task.id === taskId ? { ...task, sessionId, modelId } : task),
+      })),
+    removeTask: (id, taskId) =>
+      patch(id, (p) => ({ ...p, tasks: p.tasks.filter((t) => t.id !== taskId) })),
+    addAsset: (id, a) =>
+      patch(id, (p) => ({
+        ...p,
+        assets: [
+          ...p.assets,
+          {
+            id: uid("asset"),
+            name: a.name,
+            kind: a.kind,
+            ext: a.ext,
+            sizeLabel: a.sizeLabel,
+            updater: a.updater ?? "-",
+            updatedAt: a.updatedAt ?? new Date().toISOString(),
+            path: a.path,
+            sizeBytes: a.sizeBytes,
+          },
+        ],
+      })),
+    addAssets: (id, assets) => {
+      if (assets.length === 0) return;
+      const now = new Date().toISOString();
+      patch(id, (p) => ({
+        ...p,
+        assets: [
+          ...p.assets,
+          ...assets.map((asset) => ({
+            id: uid("asset"),
+            name: asset.name,
+            kind: asset.kind,
+            ext: asset.ext,
+            sizeLabel: asset.sizeLabel,
+            updater: asset.updater ?? "-",
+            updatedAt: asset.updatedAt ?? now,
+            path: asset.path,
+            sizeBytes: asset.sizeBytes,
+          })),
+        ],
+      }));
+    },
+    removeAsset: (id, assetId) =>
+      patch(id, (p) => ({ ...p, assets: p.assets.filter((a) => a.id !== assetId) })),
+    addMember: (id, name) =>
+      patch(id, (p) =>
+        p.members.includes(name) ? p : { ...p, members: [...p.members, name] },
+      ),
+    addConversation: (id, conv) =>
+      patch(id, (p) => ({
+        ...p,
+        conversations: [conv, ...p.conversations],
+      })),
+    removeConversation: (id, sessionId) =>
+      patch(id, (p) => ({
+        ...p,
+        conversations: p.conversations.filter((c) => c.sessionId !== sessionId),
+      })),
+    detachSessionFromProject: (id, sessionId) =>
+      patch(id, (project) => {
+        const plans = project.plans.map((plan) => {
+          if (plan.sessionId !== sessionId) return plan;
+          const nextPlan: PlanCard = { ...plan };
+          delete nextPlan.sessionId;
+          delete nextPlan.sessionArchived;
+          return nextPlan;
+        });
+        const tasks = project.tasks.map((task) => {
+          if (task.sessionId !== sessionId) return task;
+          const nextTask: TaskItem = { ...task };
+          delete nextTask.sessionId;
+          delete nextTask.sessionArchived;
+          return nextTask;
+        });
+        return {
+          ...project,
+          conversations: project.conversations.filter(
+            (conversation) => conversation.sessionId !== sessionId,
+          ),
+          plans,
+          tasks,
+        };
+      }),
+    updateConversationTitle: (id, sessionId, title) =>
+      patch(id, (p) => ({
+        ...p,
+        conversations: p.conversations.map((c) =>
+          c.sessionId === sessionId ? { ...c, title } : c,
+        ),
+      })),
+    setSessionArchived: (sessionId, archived) => {
+      let changed = false;
+      const next = get().projects.map((project) => {
+        const needsUpdate = project.conversations.some(
+          (item) => item.sessionId === sessionId && !!item.archived !== archived,
+        ) || project.plans.some(
+          (item) => item.sessionId === sessionId && !!item.sessionArchived !== archived,
+        ) || project.tasks.some(
+          (item) => item.sessionId === sessionId && !!item.sessionArchived !== archived,
+        );
+        if (!needsUpdate) return project;
+        changed = true;
+        return {
+          ...project,
+          conversations: project.conversations.map((conversation) =>
+            conversation.sessionId === sessionId
+              ? { ...conversation, archived }
+              : conversation,
+          ),
+          plans: project.plans.map((plan) =>
+            plan.sessionId === sessionId
+              ? { ...plan, sessionArchived: archived }
+              : plan,
+          ),
+          tasks: project.tasks.map((task) =>
+            task.sessionId === sessionId
+              ? { ...task, sessionArchived: archived }
+              : task,
+          ),
+        };
+      });
+      if (!changed) return;
+      set({ projects: next });
+      persist(next);
+    },
+    reconcileSessionArchiveStates: (sessions) => {
+      const archivedById = new Map(
+        sessions
+          .filter((session) => session.archived !== undefined)
+          .map((session) => [session.sessionId, !!session.archived]),
+      );
+      if (archivedById.size === 0) return;
+      let changed = false;
+      const next = get().projects.map((project) => {
+        let projectChanged = false;
+        const conversations = project.conversations.map((conversation) => {
+          const archived = archivedById.get(conversation.sessionId);
+          if (archived === undefined || !!conversation.archived === archived) return conversation;
+          changed = true;
+          projectChanged = true;
+          return { ...conversation, archived };
+        });
+        const plans = project.plans.map((plan) => {
+          if (!plan.sessionId) return plan;
+          const archived = archivedById.get(plan.sessionId);
+          if (archived === undefined || !!plan.sessionArchived === archived) return plan;
+          changed = true;
+          projectChanged = true;
+          return { ...plan, sessionArchived: archived };
+        });
+        const tasks = project.tasks.map((task) => {
+          if (!task.sessionId) return task;
+          const archived = archivedById.get(task.sessionId);
+          if (archived === undefined || !!task.sessionArchived === archived) return task;
+          changed = true;
+          projectChanged = true;
+          return { ...task, sessionArchived: archived };
+        });
+        return projectChanged ? { ...project, conversations, plans, tasks } : project;
+      });
+      if (!changed) return;
+      set({ projects: next });
+      persist(next);
+    },
+    removeSessionReferences: (sessionId) => {
+      let changed = false;
+      const next = get().projects.map((project) => {
+        const hasConversation = project.conversations.some((item) => item.sessionId === sessionId);
+        const hasPlan = project.plans.some((item) => item.sessionId === sessionId);
+        const hasTask = project.tasks.some((item) => item.sessionId === sessionId);
+        if (!hasConversation && !hasPlan && !hasTask) return project;
+        changed = true;
+        const conversations = project.conversations.filter((item) => item.sessionId !== sessionId);
+        const plans = project.plans.map((plan) => {
+          if (plan.sessionId !== sessionId) return plan;
+          const nextPlan: PlanCard = { ...plan };
+          delete nextPlan.sessionId;
+          delete nextPlan.sessionArchived;
+          return nextPlan;
+        });
+        const tasks = project.tasks.map((task) => {
+          if (task.sessionId !== sessionId) return task;
+          const nextTask: TaskItem = { ...task };
+          delete nextTask.sessionId;
+          delete nextTask.sessionArchived;
+          return nextTask;
+        });
+        return { ...project, conversations, plans, tasks };
+      });
+      if (!changed) return;
+      set({ projects: next });
+      persist(next);
+    },
+  };
+});
+
+/**
+ * Reconcile renderer cache with the canonical Rust store once Tauri is ready.
+ * A missing backend file triggers a one-time migration from localStorage.
+ */
+export async function hydrateProjectsFromBackend(): Promise<void> {
+  const cached = useProjectsStore.getState().projects;
+  let hasPendingSync = false;
+  try { hasPendingSync = window.localStorage.getItem(DIRTY_KEY) === "1"; } catch { /* cache unavailable */ }
+  if (hasPendingSync) {
+    await projectsSave(cached);
+    try { window.localStorage.removeItem(DIRTY_KEY); } catch { /* cache unavailable */ }
+    useProjectsStore.setState({ persisting: false, persistError: null });
+    return;
+  }
+  const backend = await projectsLoad<ProjectMeta>();
+  if (backend.length === 0 && cached.length > 0) {
+    await projectsSave(cached);
+    return;
+  }
+  const normalized = backend.map(normalize).filter(Boolean) as ProjectMeta[];
+  useProjectsStore.setState({ projects: normalized });
+  saveLocal(normalized);
+}

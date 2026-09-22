@@ -106,6 +106,24 @@ echo-agent dashboard build  # 构建 Web Dashboard 前端产物（源码安装�
 
 完整子命令与参数见 [CLI 参考](https://fuyuxiang.github.io/echo-agent/reference/cli/)，全部配置项见 [配置参考](https://fuyuxiang.github.io/echo-agent/reference/configuration/)。
 
+### 桌面客户端
+
+`client/` 是可独立开发和打包的 Tauri 2 桌面应用：React / TypeScript 负责界面，Rust 负责本地能力与 Agent 运行时。运行时源码已收录在 `client/vendor/`，因此不需要先构建 Python 包或单独部署 Gateway。客户端覆盖对话与项目管理、代码工作台、知识库、技能与连接器、定时自动化，以及受控的 Browser Use / Computer Use。
+
+<div align="center">
+  <img src="client/docs/images/echoagent-home.png" alt="EchoAgent 桌面客户端" width="820" />
+</div>
+
+本地开发需要 Node.js、pnpm、Rust stable（最低 1.92）和 `protoc`；macOS 还需 Xcode Command Line Tools，Windows 需 Visual Studio 2022 的“使用 C++ 的桌面开发”工作负载。
+
+```bash
+cd client
+pnpm install
+pnpm tauri dev
+```
+
+`pnpm test` 运行前端测试，`pnpm build` 执行 TypeScript 检查和前端生产构建。平台签名环境就绪后，`pnpm dist` 会在当前平台生成安装包；当前发布脚本覆盖 Windows x86_64 和 macOS Apple Silicon / Intel。完整发布流程见 [client/docs/release-workflow.md](client/docs/release-workflow.md)，桌面自动化的平台与安全边界见 [client/docs/automation-platform-support.md](client/docs/automation-platform-support.md)。
+
 ### 常驻运行（后台服务）
 
 `echo-agent run` 和 `echo-agent gateway` 都是前台进程，关掉终端就退出。想让 agent 7×24 常驻，把网关注册为系统服务即可（macOS 注册用户级 LaunchAgent，Linux 注册用户级 systemd 服务，均无需 root，开机自启、崩溃自动拉起）：

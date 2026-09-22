@@ -5,6 +5,8 @@
 *.pyc
 dist/
 build/
+# The desktop client's vendored Rust runtime has a source crate named `build`.
+!client/vendor/echo-agent-build/crates/build/
 *.egg-info/
 *.egg
 *.pycs

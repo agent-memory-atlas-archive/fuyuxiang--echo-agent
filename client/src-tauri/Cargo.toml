@@ -1,0 +1,146 @@
+[package]
+name = "echoagent"
+version = "0.3.10"
+description = "EchoAgent — an open-source desktop agent workspace built on Tauri"
+authors = ["EchoAgent"]
+edition = "2021"
+rust-version = "1.92.0"
+
+# The Tauri library expects a lib target (for mobile, and so the binary can
+# stay thin). We follow the standard Tauri 2 layout: `lib.rs` with a `run()`,
+# and `main.rs` that calls it.
+[lib]
+name = "echoagent_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+embed-resource = "3"
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+# Pin the updater minor because `app_updater.rs` injects our private CA through
+# its reqwest 0.12 client hook. Upgrading this plugin must be tested together
+# with the direct reqwest dependency below.
+tauri-plugin-updater = "=2.9.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# In-process team MCP server (team_mcp.rs) — streamable-http JSON-RPC.
+# Already in Cargo.lock as a transitive dependency of the embedded upstream
+# runtime (axum 0.8); minimal
+# features: HTTP/1.1 + JSON body extraction + tokio IO.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+hyper = { version = "1", features = ["client", "http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+uuid = { version = "1", features = ["v7"] }
+# statusMatch patterns in connector cli.json files (CLI connector auth).
+regex = "1"
+# Phase 2 cross-file symbol index: walk the workspace honouring .gitignore.
+ignore = "0.4"
+walkdir = "2"
+# Task checkpoints must also work outside Git repositories.  Use an in-process
+# line diff so local-folder change tracking does not quietly depend on a Git
+# executable being installed.
+similar = "2.7"
+# Phase 2 file watcher: debounced events for incremental symbol index updates.
+notify-debouncer-full = "0.5"
+# Phase 2 reference search: word-boundary scanning uses the same `regex`
+# engine already imported for symbol parsing; no extra crate needed.
+fs2 = "0.4"
+libc = "0.2"
+# SP1: cross-platform "move to OS trash" for file deletion from the workbench.
+trash = "5"
+
+# EchoAgent's in-process runtime adapter. The Apache-2.0 Runtime source snapshot
+# is tracked directly at <repo>/vendor/echo-agent-build (see ECHOAGENT_VENDOR.json and
+# THIRD_PARTY_NOTICES.md); these are relative path dependencies into it. Cargo
+# resolves their `.workspace = true` fields against that root Cargo.toml. We do
+# not join that workspace (see the explicit [workspace] table below).
+echo-agent-acp = { path = "../vendor/echo-agent-build/crates/codegen/echo-agent-acp" }
+echo-agent-runtime = { path = "../vendor/echo-agent-build/crates/codegen/echo-agent-runtime" }
+echo-agent-memory = { path = "../vendor/echo-agent-build/crates/codegen/echo-agent-memory" }
+echo-agent-tools = { path = "../vendor/echo-agent-build/crates/codegen/echo-agent-tools" }
+echo-agent-pty = { path = "../vendor/echo-agent-build/crates/codegen/echo-agent-pty" }
+echo-agent-tool-runtime = { path = "../vendor/echo-agent-build/crates/common/echo-agent-tool-runtime" }
+echo-agent-tool-protocol = { path = "../vendor/echo-agent-build/crates/common/echo-agent-tool-protocol" }
+echo-agent-tool-types = { path = "../vendor/echo-agent-build/crates/common/echo-agent-tool-types" }
+futures = "0.3"
+tokio-tungstenite = "0.29"
+schemars = "1"
+agent-client-protocol = { version = "0.10.4", features = ["unstable"] }
+dirs = "6"
+toml = "0.8"
+tokio-util = { version = "0.7", features = ["compat", "io", "rt"] }
+bytes = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# Local avatar/chat-attachment thumbnails (PNG/JPEG/GIF/WebP decode + JPEG encode).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+base64 = "0.22"
+# Open URLs / local paths with the OS default handler (markdown links & paths).
+open = "5"
+# Fetch available models from a provider's /models endpoint (multi-model setup).
+# rustls-tls avoids a native OpenSSL dependency on Windows.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
+quick-xml = "0.38"
+url = "2.5"
+urlencoding = "2.1"
+# Enterprise Skill sync: package digest/signature verification and safe ZIP extraction.
+sha2 = "0.10"
+ed25519-dalek = "2.2"
+zip = { version = "3", default-features = false, features = ["deflate"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-autostart = "2"
+# Keep automation/tray launches and ordinary launches in one process. This is
+# especially important on Windows where a hidden resident WebView and a second
+# process can contend for the same WebView2 profile.
+tauri-plugin-single-instance = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+security-framework-sys = "2.17"
+objc2-foundation = { version = "0.3.2", features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "NSRunningApplication", "NSWorkspace"] }
+core-graphics = { version = "0.25", features = ["elcapitan", "highsierra"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Call Windows DPAPI directly. Spawning PowerShell made credential persistence
+# depend on .NET assembly loading and discarded the actual encryption error.
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13.2", features = ["xtest"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# Dev profile - enable debug info and use safer optimization
+[profile.dev]
+debug = true
+opt-level = 0
+incremental = true
+
+[profile.release]
+incremental = true
+codegen-units = 16
+
+# Declare an explicit, self-contained workspace so Cargo does NOT pull this
+# crate into the upstream workspace (which would inherit its profile/lint
+# settings and the 80 workspace members). The path dependencies above still
+# resolve their `.workspace = true` fields against that root.
+[workspace]
+members = ["."]
