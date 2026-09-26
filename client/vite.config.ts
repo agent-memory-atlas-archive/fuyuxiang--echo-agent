@@ -9,14 +9,40 @@ import path from "node:path";
 const HOST = "0.0.0.0";
 const PORT = 1420;
 
+// `process.env.VITEST` is set by vitest before vite evaluates the config
+// file, so we can scope the monaco-editor alias to tests only and leave the
+// production `dev` / `build` modes resolving the package through vite's
+// normal `module`-field lookup.
+const isVitest = process.env.VITEST === "true" || process.env.VITEST === true;
+const monacoEditorEntry = path.resolve(
+  __dirname,
+  "node_modules/monaco-editor/esm/vs/editor/editor.main.js",
+);
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: {
+    alias: [
       // Mirror EchoAgent's `@` alias so ported components resolve unchanged.
-      "@": path.resolve(__dirname, "src"),
-    },
+      { find: "@", replacement: path.resolve(__dirname, "src") },
+      // Only needed in vitest: monaco-editor 0.52 ships no `exports`
+      // field, so vite's bare-specifier resolver fails to find the entry.
+      // Production builds resolve through the package's `module` field
+      // (esm/vs/editor/editor.main.js), which also pulls in the five
+      // built-in language contributions (basic-languages / css / html /
+      // json / typescript). Tests pin the same file so behavior matches.
+      // `monaco-editor/esm/...` deep paths are left untouched so vite's
+      // `?worker` plugin can still process them.
+      ...(isVitest
+        ? [
+            {
+              find: /^monaco-editor$/,
+              replacement: monacoEditorEntry,
+            },
+          ]
+        : []),
+    ],
   },
   // Tauri webview can't reach a host-relative absolute URL during dev
   // (no server origin), so always emit relative paths.
@@ -28,7 +54,7 @@ export default defineConfig({
     strictPort: true,
     // Tauri waits for this string before launching the webview.
     watch: {
-      ignored: ["**/src-tauri/**"],
+      ignored: ["**/src-tauri/**", "**/vendor/theia-platform/**"],
     },
   },
   // Produce asset URLs that work from the tauri:// or file:// origin
@@ -57,6 +83,8 @@ export default defineConfig({
     },
   },
   test: {
+    include: ["src/**/*.{test,spec}.{ts,tsx}", "scripts/**/*.test.mjs"],
+    environmentMatchGlobs: [["scripts/**/*.test.mjs", "node"]],
     globals: true,
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],

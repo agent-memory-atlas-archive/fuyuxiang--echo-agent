@@ -22,7 +22,10 @@ import {
 } from "@/lib/cloud-storage";
 import { useAppDialog } from "./AppDialog";
 
-export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void }) {
+export function CloudStoragePanel({ onToast, onUnsavedChange }: {
+  onToast?: (msg: string) => void;
+  onUnsavedChange?: (dirty: boolean) => void;
+}) {
   const [providers, setProviders] = useState<Array<{ id: string; label: string }>>([]);
   const [configs, setConfigs] = useState<StorageProviderConfig[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
@@ -33,12 +36,28 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
   const [configError, setConfigError] = useState<string | null>(null);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [showConfig, setShowConfig] = useState(false);
-  const [preview, setPreview] = useState<{ name: string; path: string; content: string } | null>(null);
+  const [preview, setPreview] = useState<{
+    providerId: string;
+    name: string;
+    path: string;
+    content: string;
+    savedContent: string;
+  } | null>(null);
+  const previewDirty = Boolean(preview && preview.content !== preview.savedContent);
+
+  useEffect(() => {
+    onUnsavedChange?.(previewDirty);
+  }, [onUnsavedChange, previewDirty]);
+
+  useEffect(() => {
+    return () => onUnsavedChange?.(false);
+  }, [onUnsavedChange]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [configSaving, setConfigSaving] = useState(false);
   const { requestConfirmation, requestInput, dialog } = useAppDialog(`${selectedProvider ?? ""}\u0000${currentPath}`);
   const configGeneration = useRef(0);
   const browseGeneration = useRef(0);
+  const previewReadGeneration = useRef(0);
   const configSavingRef = useRef(false);
   const [draft, setDraft] = useState<StorageProviderConfig>({
     id: "",
@@ -122,6 +141,8 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
         setProviders(listStorageProviders());
         setSelectedProvider(null);
         setEntries([]);
+        setPreview(null);
+        previewReadGeneration.current += 1;
         onToast?.("已移除存储源");
       },
       onError: (error) => onToast?.(`移除失败：${String(error).replace(/^Error:\s*/, "")}`),
@@ -149,16 +170,39 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
     }
   };
 
+  const leavePreview = (action: () => void) => {
+    previewReadGeneration.current += 1;
+    if (preview && preview.content !== preview.savedContent) {
+      requestConfirmation({
+        title: "舍弃未保存的文件修改？",
+        description: `“${preview.name}”的修改尚未保存，继续操作会丢失这些修改。`,
+        confirmLabel: "舍弃修改",
+        danger: true,
+        action: async () => {
+          setPreview(null);
+          action();
+        },
+      });
+      return;
+    }
+    setPreview(null);
+    action();
+  };
+
   const selectProvider = (id: string) => {
-    setSelectedProvider(id);
-    setEntries([]);
-    setCurrentPath("/");
-    void browse(id, "/");
+    if (id === selectedProvider) return;
+    leavePreview(() => {
+      setSelectedProvider(id || null);
+      setEntries([]);
+      setCurrentPath("/");
+      if (id) void browse(id, "/");
+    });
   };
 
   const openEntry = (entry: StorageEntry) => {
     if (entry.isDir && selectedProvider) {
-      void browse(selectedProvider, entry.path);
+      const providerId = selectedProvider;
+      leavePreview(() => { void browse(providerId, entry.path); });
     }
   };
 
@@ -166,7 +210,8 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
     if (!selectedProvider) return;
     const parts = currentPath.split("/").filter(Boolean);
     parts.pop();
-    void browse(selectedProvider, "/" + parts.join("/"));
+    const providerId = selectedProvider;
+    leavePreview(() => { void browse(providerId, "/" + parts.join("/")); });
   };
 
   const deleteEntry = (entry: StorageEntry) => {
@@ -192,18 +237,25 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
 
   const readFile = async (entry: StorageEntry) => {
     if (!selectedProvider) return;
-    const provider = getStorageProvider(selectedProvider);
+    const providerId = selectedProvider;
+    const provider = getStorageProvider(providerId);
     if (!provider) return;
-    try {
-      const content = await provider.readText(entry.path);
-      if (content != null) {
-        setPreview({ name: entry.name, path: entry.path, content });
-      } else {
-        onToast?.("(空文件或二进制)");
-      }
-    } catch (error) {
-      onToast?.(`读取失败：${String(error).replace(/^Error:\s*/, "")}`);
-    }
+    leavePreview(() => {
+      const generation = ++previewReadGeneration.current;
+      void (async () => {
+        try {
+          const content = await provider.readText(entry.path);
+          if (generation !== previewReadGeneration.current) return;
+          if (content != null) {
+            setPreview({ providerId, name: entry.name, path: entry.path, content, savedContent: content });
+          } else {
+            onToast?.("(空文件或二进制)");
+          }
+        } catch (error) {
+          if (generation === previewReadGeneration.current) onToast?.(`读取失败：${String(error).replace(/^Error:\s*/, "")}`);
+        }
+      })();
+    });
   };
 
   const beginNewConfig = () => {
@@ -277,12 +329,16 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
   };
 
   const savePreview = async () => {
-    if (!selectedProvider || !preview) return;
+    if (!preview || selectedProvider !== preview.providerId) return;
+    const snapshot = preview;
     setBusyAction("保存中…");
     try {
-      const ok = await getStorageProvider(selectedProvider)?.writeText(preview.path, preview.content);
+      const ok = await getStorageProvider(snapshot.providerId)?.writeText(snapshot.path, snapshot.content);
       if (!ok) throw new Error("写入失败");
-      await browse(selectedProvider, currentPath);
+      setPreview((current) => current?.providerId === snapshot.providerId && current.path === snapshot.path
+        ? { ...current, savedContent: snapshot.content }
+        : current);
+      if (selectedProvider === snapshot.providerId) await browse(snapshot.providerId, currentPath);
       onToast?.("文本已保存");
     } catch (error) {
       onToast?.(`保存失败：${String(error).replace(/^Error:\s*/, "")}`);
@@ -339,9 +395,9 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
   return (
     <div className="storage-panel" role="region" aria-label="云存储">
       <div className="storage-panel__head">
-        <span className="storage-panel__title">云存储</span>
+        <span className="storage-panel__title">存储源</span>
         {providers.length > 0 ? (
-          <select aria-label="选择云存储源" value={selectedProvider ?? ""} onChange={(e) => selectProvider(e.target.value)}>
+          <select className="form-control" aria-label="选择云存储源" value={selectedProvider ?? ""} onChange={(e) => selectProvider(e.target.value)}>
             <option value="">选择存储源…</option>
             {providers.map((p) => (
               <option key={p.id} value={p.id}>{p.label}</option>
@@ -353,9 +409,9 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
           </span>
         )}
         <div className="storage-panel__head-actions">
-          <button type="button" onClick={beginNewConfig}>+ WebDAV</button>
-          {selectedProvider && <button type="button" onClick={editSelectedConfig}>编辑配置</button>}
-          {selectedProvider && <button type="button" className="danger" onClick={() => void removeConfig()}>移除配置</button>}
+          <button type="button" className="form-button form-button--primary" onClick={beginNewConfig} disabled={configLoading || Boolean(configError) || configSaving}>添加存储源</button>
+          {selectedProvider && <button type="button" className="form-button" onClick={editSelectedConfig} disabled={configSaving}>编辑配置</button>}
+          {selectedProvider && <button type="button" className="form-button form-button--danger" onClick={() => void removeConfig()} disabled={configSaving}>移除配置</button>}
         </div>
       </div>
 
@@ -371,14 +427,14 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
       {showConfig && (
         <div className="storage-panel__config">
           <strong>{draft.id ? "编辑 WebDAV" : "添加 WebDAV"}</strong>
-          <input aria-label="存储源显示名" value={draft.label} disabled={configSaving} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="显示名" />
-          <input aria-label="WebDAV 地址" value={draft.baseUrl} disabled={configSaving} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://dav.example.com/path" />
-          <input aria-label="WebDAV 用户名" value={draft.username ?? ""} disabled={configSaving} onChange={(e) => setDraft({ ...draft, username: e.target.value })} placeholder="用户名（可选）" />
-          <input aria-label="WebDAV 密码或应用令牌" type="password" value={draft.password ?? ""} disabled={configSaving} onChange={(e) => setDraft({ ...draft, password: e.target.value })} placeholder="密码/应用令牌（可选）" />
+          <label className="storage-panel__field">显示名<input className="form-control" aria-label="存储源显示名" value={draft.label} disabled={configSaving} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="例如 团队文件" /></label>
+          <label className="storage-panel__field">WebDAV 地址<input className="form-control" aria-label="WebDAV 地址" value={draft.baseUrl} disabled={configSaving} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://dav.example.com/path" /></label>
+          <label className="storage-panel__field">用户名（可选）<input className="form-control" aria-label="WebDAV 用户名" value={draft.username ?? ""} disabled={configSaving} onChange={(e) => setDraft({ ...draft, username: e.target.value })} autoComplete="off" /></label>
+          <label className="storage-panel__field">密码或应用令牌（可选）<input className="form-control" aria-label="WebDAV 密码或应用令牌" type="password" value={draft.password ?? ""} disabled={configSaving} onChange={(e) => setDraft({ ...draft, password: e.target.value })} autoComplete="new-password" /></label>
           <label className="storage-panel__enabled"><input type="checkbox" checked={draft.enabled} disabled={configSaving} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} /> 启用此存储源</label>
           <div className="storage-panel__config-actions">
-            <button type="button" onClick={() => setShowConfig(false)} disabled={configSaving}>取消</button>
-            <button type="button" onClick={() => void saveConfig()} disabled={configSaving || !draft.baseUrl.trim()}>
+            <button type="button" className="form-button" onClick={() => setShowConfig(false)} disabled={configSaving}>取消</button>
+            <button type="button" className="form-button form-button--primary" onClick={() => void saveConfig()} disabled={configSaving || !draft.baseUrl.trim()}>
               {configSaving ? "保存中…" : "保存"}
             </button>
           </div>
@@ -392,12 +448,12 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
             <button type="button" onClick={goUp} className="storage-panel__up">↑ 上级</button>
           )}
           <span className="storage-panel__path">{currentPath}</span>
-          <button type="button" onClick={() => void createFolder()}>新建文件夹</button>
-          <button type="button" onClick={() => void createTextFile()}>新建文本</button>
-          <button type="button" onClick={() => void uploadFiles()} disabled={!!busyAction}>
+          <button type="button" className="form-button form-button--compact" onClick={() => void createFolder()}>新建文件夹</button>
+          <button type="button" className="form-button form-button--compact" onClick={() => void createTextFile()}>新建文本</button>
+          <button type="button" className="form-button form-button--compact" onClick={() => void uploadFiles()} disabled={!!busyAction}>
             {busyAction === "上传中…" ? busyAction : "上传文件"}
           </button>
-          <button type="button" onClick={() => void testStorageProviderConfig(selectedProvider).then(() => onToast?.("连接正常")).catch((e) => onToast?.(`连接失败：${String(e).replace(/^Error:\s*/, "")}`))}>测试连接</button>
+          <button type="button" className="form-button form-button--compact" onClick={() => void testStorageProviderConfig(selectedProvider).then(() => onToast?.("连接正常")).catch((e) => onToast?.(`连接失败：${String(e).replace(/^Error:\s*/, "")}`))}>测试连接</button>
         </div>
       )}
 
@@ -411,6 +467,9 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
       )}
 
       {/* 文件列表 */}
+      {!configLoading && !configError && !selectedProvider && !showConfig && (
+        <div className="storage-panel__empty">{providers.length ? "选择一个存储源以浏览文件。" : "连接 WebDAV 存储源，即可浏览、上传和下载云端文件。"}</div>
+      )}
       {loading ? (
         <div className="storage-panel__loading">加载中…</div>
       ) : selectedProvider && entries.length > 0 ? (
@@ -453,8 +512,8 @@ export function CloudStoragePanel({ onToast }: { onToast?: (msg: string) => void
           <div>
             <strong>{preview.name}</strong>
             <span>
-              <button type="button" onClick={() => void savePreview()} disabled={!!busyAction}>{busyAction === "保存中…" ? busyAction : "保存"}</button>
-              <button type="button" onClick={() => setPreview(null)}>关闭</button>
+              <button type="button" className="form-button form-button--primary" onClick={() => void savePreview()} disabled={!!busyAction}>{busyAction === "保存中…" ? busyAction : "保存"}</button>
+              <button type="button" className="form-button" onClick={() => leavePreview(() => {})}>关闭</button>
             </span>
           </div>
           <textarea value={preview.content} onChange={(event) => setPreview({ ...preview, content: event.target.value })} aria-label={`编辑 ${preview.name}`} />

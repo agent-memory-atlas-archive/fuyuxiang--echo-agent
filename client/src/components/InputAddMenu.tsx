@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Paperclip, ChevronRight } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { AudioLines, Check, ChevronRight, Globe2, Monitor, Paperclip } from "lucide-react";
 import {
   AddIcon,
   ExpertTabIcon,
@@ -7,6 +8,7 @@ import {
   ConnectorTabIcon,
 } from "@/foundation/components/Icon/icons";
 import { skillsList, agentsList, mcpList } from "@/lib/agent-client";
+import type { AutomationCapabilities, AutomationMode } from "@/lib/automation-client";
 import type { AgentEntry, McpServerEntry, SkillInfo } from "@/lib/types";
 
 interface InputAddMenuProps {
@@ -15,27 +17,64 @@ interface InputAddMenuProps {
   onSelectExpert?: (agent: AgentEntry) => void;
   onSelectSkill?: (skillName: string) => void;
   onNavigateConnectors?: () => void;
+  meetingMinutesAvailable?: boolean;
+  onOpenMeetingMinutes?: () => void;
+  automationMode?: AutomationMode;
+  automationCapabilities?: AutomationCapabilities | null;
+  automationModeDisabled?: boolean;
+  onAutomationModeChange?: (mode: AutomationMode) => void | Promise<void>;
 }
 
-type MenuItemId = "add-files" | "experts" | "skills" | "connectors";
-type CatalogId = Exclude<MenuItemId, "add-files">;
+type MenuItemId = "add-files" | "meeting-minutes" | "browser-use" | "computer-use" | "experts" | "skills" | "connectors";
+type CatalogId = "experts" | "skills" | "connectors";
+type SubmenuStyle = CSSProperties & { "--iam-submenu-top": string };
+type SubmenuSide = "left" | "right";
 
 interface MenuItem {
   id: MenuItemId;
   label: string;
   icon: React.ReactNode;
+  description?: string;
 }
 
-const MENU_GROUPS: MenuItem[][] = [
-  [
-    { id: "add-files", label: "点击选择文件", icon: <Paperclip size={16} /> },
-  ],
-  [
-    { id: "experts", label: "专家", icon: <ExpertTabIcon size="md" /> },
-    { id: "skills", label: "技能", icon: <SkillTabIcon size="md" /> },
-    { id: "connectors", label: "连接器", icon: <ConnectorTabIcon size="md" /> },
-  ],
+const SUBMENU_GAP = 4;
+const SUBMENU_VIEWPORT_INSET = 8;
+
+const FILE_ITEMS: MenuItem[] = [
+  { id: "add-files", label: "添加文件", icon: <Paperclip size={16} /> },
 ];
+
+const MEETING_ITEM: MenuItem = {
+  id: "meeting-minutes",
+  label: "录音转写",
+  description: "保存录音、转写并生成会议纪要",
+  icon: <AudioLines size={16} />,
+};
+
+const AUTOMATION_ITEMS: MenuItem[] = [
+  {
+    id: "browser-use",
+    label: "操作网页",
+    description: "在独立浏览器中完成网页任务",
+    icon: <Globe2 size={16} />,
+  },
+  {
+    id: "computer-use",
+    label: "操作电脑",
+    description: "查看屏幕并操作本机应用",
+    icon: <Monitor size={16} />,
+  },
+];
+
+const CATALOG_ITEMS: MenuItem[] = [
+  { id: "experts", label: "专家", icon: <ExpertTabIcon size="md" /> },
+  { id: "skills", label: "技能", icon: <SkillTabIcon size="md" /> },
+  { id: "connectors", label: "连接器", icon: <ConnectorTabIcon size="md" /> },
+];
+
+function isCatalogItem(id: MenuItemId): id is CatalogId {
+  return id === "experts" || id === "skills" || id === "connectors";
+}
 
 export function InputAddMenu({
   onPickFiles,
@@ -43,14 +82,24 @@ export function InputAddMenu({
   onSelectExpert,
   onSelectSkill,
   onNavigateConnectors,
+  meetingMinutesAvailable = false,
+  onOpenMeetingMinutes,
+  automationMode = "default",
+  automationCapabilities,
+  automationModeDisabled = false,
+  onAutomationModeChange,
 }: InputAddMenuProps) {
   const [open, setOpen] = useState(false);
   const [hoveredItem, setHoveredItem] = useState<MenuItemId | null>(null);
+  const [submenuTop, setSubmenuTop] = useState(0);
+  const [submenuSide, setSubmenuSide] = useState<SubmenuSide>("right");
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const mainItemRefs = useRef(new Map<MenuItemId, HTMLButtonElement>());
   const submenuRef = useRef<HTMLDivElement>(null);
   const loadGenerationRef = useRef(0);
+  const focusFirstItemOnOpenRef = useRef(false);
   const pendingSubmenuFocusRef = useRef(false);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,6 +109,13 @@ export function InputAddMenu({
   const [connectors, setConnectors] = useState<McpServerEntry[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogErrors, setCatalogErrors] = useState<Partial<Record<CatalogId, string>>>({});
+  const fileItems = meetingMinutesAvailable && onOpenMeetingMinutes
+    ? [...FILE_ITEMS, MEETING_ITEM]
+    : FILE_ITEMS;
+  const menuGroups = onAutomationModeChange
+    ? [fileItems, AUTOMATION_ITEMS, CATALOG_ITEMS]
+    : [fileItems, CATALOG_ITEMS];
+  const flatItems = menuGroups.flat();
 
   const loadData = useCallback(async () => {
     const generation = ++loadGenerationRef.current;
@@ -94,7 +150,9 @@ export function InputAddMenu({
   }, [open, loadData]);
 
   useEffect(() => {
-    if (open) mainItemRefs.current.get("add-files")?.focus();
+    if (!open || !focusFirstItemOnOpenRef.current) return;
+    mainItemRefs.current.get("add-files")?.focus();
+    focusFirstItemOnOpenRef.current = false;
   }, [open]);
 
   // Close on outside click
@@ -102,6 +160,7 @@ export function InputAddMenu({
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        focusFirstItemOnOpenRef.current = false;
         setOpen(false);
         setHoveredItem(null);
       }
@@ -112,6 +171,7 @@ export function InputAddMenu({
 
   useEffect(() => {
     if (!disabled) return;
+    focusFirstItemOnOpenRef.current = false;
     setOpen(false);
     setHoveredItem(null);
   }, [disabled]);
@@ -122,6 +182,7 @@ export function InputAddMenu({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        focusFirstItemOnOpenRef.current = false;
         setOpen(false);
         setHoveredItem(null);
         triggerRef.current?.focus();
@@ -143,9 +204,9 @@ export function InputAddMenu({
   const handleItemEnter = (id: MenuItemId) => {
     if (leaveTimerRef.current) { clearTimeout(leaveTimerRef.current); leaveTimerRef.current = null; }
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    // Items without submenus show immediately
-    if (id === "add-files") { setHoveredItem(null); return; }
-    hoverTimerRef.current = setTimeout(() => setHoveredItem(id), 150);
+    // Direct actions never open the catalog flyout.
+    if (!isCatalogItem(id)) { setHoveredItem(null); return; }
+    hoverTimerRef.current = setTimeout(() => openSubmenu(id), 150);
   };
 
   const handleItemLeave = () => {
@@ -162,6 +223,7 @@ export function InputAddMenu({
   };
 
   const close = (restoreFocus = true) => {
+    focusFirstItemOnOpenRef.current = false;
     pendingSubmenuFocusRef.current = false;
     setOpen(false);
     setHoveredItem(null);
@@ -191,17 +253,95 @@ export function InputAddMenu({
     return () => window.cancelAnimationFrame(frame);
   }, [catalogErrors, catalogLoading, connectors, experts, hoveredItem, skills]);
 
-  const openSubmenu = (id: Exclude<MenuItemId, "add-files">, moveFocus = false) => {
+  const openSubmenu = (id: CatalogId, moveFocus = false) => {
+    setSubmenuTop(mainItemRefs.current.get(id)?.offsetTop ?? 0);
     setHoveredItem(id);
     if (moveFocus) focusSubmenu();
   };
 
-  const handleItemClick = (id: MenuItemId) => {
-    if (id === "add-files") { close(); onPickFiles(); }
-    else openSubmenu(id, true);
+  const updateSubmenuPosition = useCallback(() => {
+    if (!hoveredItem || !isCatalogItem(hoveredItem)) return;
+
+    const anchor = mainItemRefs.current.get(hoveredItem);
+    const popover = popoverRef.current;
+    const submenu = submenuRef.current;
+    if (!anchor || !popover || !submenu) return;
+
+    const popoverRect = popover.getBoundingClientRect();
+    const submenuHeight = submenu.offsetHeight;
+    const preferredTop = anchor.offsetTop;
+    const minTop = SUBMENU_VIEWPORT_INSET - popoverRect.top;
+    const maxTop = window.innerHeight
+      - SUBMENU_VIEWPORT_INSET
+      - popoverRect.top
+      - submenuHeight;
+    const nextTop = Math.round(
+      Math.max(minTop, Math.min(preferredTop, Math.max(minTop, maxTop))),
+    );
+    setSubmenuTop((current) => current === nextTop ? current : nextTop);
+
+    const roomOnRight = window.innerWidth
+      - SUBMENU_VIEWPORT_INSET
+      - popoverRect.right
+      - SUBMENU_GAP;
+    const roomOnLeft = popoverRect.left - SUBMENU_VIEWPORT_INSET - SUBMENU_GAP;
+    const nextSide: SubmenuSide = roomOnRight >= submenu.offsetWidth || roomOnRight >= roomOnLeft
+      ? "right"
+      : "left";
+    setSubmenuSide((current) => current === nextSide ? current : nextSide);
+  }, [hoveredItem]);
+
+  useLayoutEffect(() => {
+    if (!hoveredItem) return;
+
+    updateSubmenuPosition();
+    window.addEventListener("resize", updateSubmenuPosition);
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateSubmenuPosition);
+    if (submenuRef.current) observer?.observe(submenuRef.current);
+
+    return () => {
+      window.removeEventListener("resize", updateSubmenuPosition);
+      observer?.disconnect();
+    };
+  }, [catalogErrors, catalogLoading, connectors.length, experts.length, hoveredItem, skills.length, updateSubmenuPosition]);
+
+  const handleItemClick = (id: MenuItemId, moveFocusToSubmenu = false) => {
+    if (id === "add-files") {
+      close();
+      onPickFiles();
+      return;
+    }
+    if (id === "meeting-minutes") {
+      close(false);
+      onOpenMeetingMinutes?.();
+      return;
+    }
+    if (id === "browser-use" || id === "computer-use") {
+      const nextMode: AutomationMode = id === "browser-use" ? "browser_use" : "computer_use";
+      const capability = nextMode === "browser_use"
+        ? automationCapabilities?.browser
+        : automationCapabilities?.computer;
+      if (automationModeDisabled || capability?.available === false) return;
+      close();
+      void onAutomationModeChange?.(automationMode === nextMode ? "default" : nextMode);
+      return;
+    }
+    openSubmenu(id, moveFocusToSubmenu);
   };
 
-  const flatItems = MENU_GROUPS.flat();
+  const handleTriggerClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const openedFromKeyboard = event.detail === 0;
+    setHoveredItem(null);
+    setOpen((current) => {
+      const willOpen = !current;
+      focusFirstItemOnOpenRef.current = willOpen && openedFromKeyboard;
+      return willOpen;
+    });
+  };
+
   const handleMainKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
     item: MenuItem,
@@ -223,10 +363,10 @@ export function InputAddMenu({
     } else if (event.key === "End") {
       event.preventDefault();
       focusAt(flatItems.length - 1);
-    } else if (event.key === "ArrowRight" && item.id !== "add-files") {
+    } else if (event.key === "ArrowRight" && isCatalogItem(item.id)) {
       event.preventDefault();
       openSubmenu(item.id, true);
-    } else if ((event.key === "Enter" || event.key === " ") && item.id !== "add-files") {
+    } else if ((event.key === "Enter" || event.key === " ") && isCatalogItem(item.id)) {
       event.preventDefault();
       openSubmenu(item.id, true);
     }
@@ -376,10 +516,11 @@ export function InputAddMenu({
 
     return (
       <div
-        className="iam-submenu"
+        className={`iam-submenu iam-submenu--${submenuSide}`}
+        style={{ "--iam-submenu-top": `${submenuTop}px` } as SubmenuStyle}
         role="menu"
         tabIndex={-1}
-        aria-label={`${MENU_GROUPS.flat().find((item) => item.id === hoveredItem)?.label ?? "添加"}子菜单`}
+        aria-label={`${flatItems.find((item) => item.id === hoveredItem)?.label ?? "添加"}子菜单`}
         ref={submenuRef}
         onKeyDown={handleSubmenuKeyDown}
         onMouseEnter={handleSubmenuEnter}
@@ -394,39 +535,68 @@ export function InputAddMenu({
     <div className="iam-wrap" ref={containerRef}>
       <button
         className="echo-composer__add"
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        onClick={handleTriggerClick}
         disabled={disabled}
         aria-label="添加"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? "composer-add-menu" : undefined}
-        title="添加文件、专家、技能、连接器"
+        title="添加文件、工具或扩展能力"
         ref={triggerRef}
       >
         <AddIcon size="md" />
       </button>
 
       {open && !disabled && (
-        <div className="iam-popover" id="composer-add-menu" role="menu" aria-label="添加内容">
-          {MENU_GROUPS.map((group, gi) => (
+        <div
+          className="iam-popover"
+          id="composer-add-menu"
+          role="menu"
+          aria-label="添加内容"
+          ref={popoverRef}
+        >
+          {menuGroups.map((group, gi) => (
             <div key={gi}>
               {gi > 0 && <div className="iam-divider" />}
               <div className="iam-group">
                 {group.map((item) => {
                   const itemIndex = flatItems.findIndex((candidate) => candidate.id === item.id);
+                  const mode = item.id === "browser-use"
+                    ? "browser_use"
+                    : item.id === "computer-use"
+                      ? "computer_use"
+                      : null;
+                  const capability = mode === "browser_use"
+                    ? automationCapabilities?.browser
+                    : mode === "computer_use"
+                      ? automationCapabilities?.computer
+                      : null;
+                  const modeUnavailable = Boolean(mode) && (
+                    automationModeDisabled || capability?.available === false
+                  );
+                  const selected = Boolean(mode) && automationMode === mode;
+                  const description = capability?.available === false
+                    ? capability.reason || "当前设备不可用"
+                    : item.description;
                   return (
                   <button
                     type="button"
                     key={item.id}
                     className={
-                      "iam-item" + (hoveredItem === item.id ? " iam-item--active" : "")
+                      "iam-item"
+                      + (hoveredItem === item.id ? " iam-item--active" : "")
+                      + (selected ? " iam-item--selected" : "")
+                      + (modeUnavailable ? " iam-item--disabled" : "")
                     }
                     onMouseEnter={() => handleItemEnter(item.id)}
                     onMouseLeave={handleItemLeave}
-                    onClick={() => handleItemClick(item.id)}
-                    role="menuitem"
-                    aria-haspopup={item.id === "add-files" ? undefined : "menu"}
-                    aria-expanded={item.id === "add-files" ? undefined : hoveredItem === item.id}
+                    onClick={(event) => handleItemClick(item.id, event.detail === 0)}
+                    role={mode ? "menuitemradio" : "menuitem"}
+                    aria-checked={mode ? selected : undefined}
+                    aria-disabled={modeUnavailable || undefined}
+                    aria-haspopup={isCatalogItem(item.id) ? "menu" : undefined}
+                    aria-expanded={isCatalogItem(item.id) ? hoveredItem === item.id : undefined}
+                    title={modeUnavailable ? description : undefined}
                     ref={(element) => {
                       if (element) mainItemRefs.current.set(item.id, element);
                       else mainItemRefs.current.delete(item.id);
@@ -434,8 +604,12 @@ export function InputAddMenu({
                     onKeyDown={(event) => handleMainKeyDown(event, item, itemIndex)}
                   >
                     <span className="iam-item__icon">{item.icon}</span>
-                    <span className="iam-item__label">{item.label}</span>
-                    {item.id !== "add-files" && (
+                    <span className="iam-item__copy">
+                      <span className="iam-item__label">{item.label}</span>
+                      {description && <span className="iam-item__description">{description}</span>}
+                    </span>
+                    {selected && <Check className="iam-item__check" size={15} strokeWidth={2} />}
+                    {isCatalogItem(item.id) && (
                       <span className="iam-item__chevron">
                         <ChevronRight size={14} strokeWidth={1.5} />
                       </span>

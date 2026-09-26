@@ -54,6 +54,13 @@ foreach ($cmd in @("node", "pnpm", "cargo", "rustc")) {
 }
 Log-Ok "Core tools present"
 
+$nodeArch = & node -p "process.arch"
+if ($LASTEXITCODE -ne 0 -or $nodeArch -ne "x64") {
+    Log-Err "Windows installer target is x86_64-pc-windows-msvc, but Node.js architecture is $nodeArch. Use x64 Node.js so the bundled Echo Code IDE runtime matches the installer."
+    exit 1
+}
+Log-Ok "Node.js architecture matches windows-x86_64"
+
 # ---------------------------------------------------------------------------
 # 2. Version sync (optional)
 # ---------------------------------------------------------------------------
@@ -144,6 +151,24 @@ Log-Step "Checking vendored Runtime source"
 & node (Join-Path $ProjectRoot "scripts\verify-vendored-runtime.mjs")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Log-Ok "Vendored Runtime source is complete"
+
+Log-Step "Building and staging Echo Code IDE"
+& pnpm ide:build
+if ($LASTEXITCODE -ne 0) { throw "Theia IDE build failed" }
+& pnpm ide:stage
+if ($LASTEXITCODE -ne 0) { throw "Theia runtime staging failed" }
+$stagedTheiaEntry = Join-Path $ProjectRoot "src-tauri\resources\theia\browser\lib\backend\main.js"
+$stagedNode = Join-Path $ProjectRoot "src-tauri\resources\theia\node\node.exe"
+if (-not (Test-Path $stagedTheiaEntry -PathType Leaf) -or -not (Test-Path $stagedNode -PathType Leaf)) {
+    Log-Err "Echo Code IDE or its Node.js runtime is missing from the staged Windows resources."
+    exit 1
+}
+$stagedNodeArch = & $stagedNode -p "process.arch"
+if ($LASTEXITCODE -ne 0 -or $stagedNodeArch -ne "x64") {
+    Log-Err "Staged Node.js architecture is $stagedNodeArch; the Windows installer requires x64."
+    exit 1
+}
+Log-Ok "Vendored Theia IDE and Node runtime staged"
 
 # ---------------------------------------------------------------------------
 # 5. NSIS tool cache (work around GitHub download timeouts in CN).

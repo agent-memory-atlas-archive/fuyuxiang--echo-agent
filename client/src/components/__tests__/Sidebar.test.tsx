@@ -52,11 +52,13 @@ describe("Sidebar", () => {
     });
   });
 
-  it("渲染导航项", () => {
-    render(<Sidebar {...base} />);
-    for (const label of ["新建任务", "项目", "专家·技能·连接器", "自动化", "更多"]) {
-      expect(screen.getByText(label)).toBeInTheDocument();
-    }
+  it("按工作流顺序渲染导航项", () => {
+    const { container } = render(<Sidebar {...base} />);
+    const nav = container.querySelector(".sidebar__nav");
+    expect(nav).not.toBeNull();
+    expect(within(nav as HTMLElement).getAllByRole("button").map((button) => button.textContent?.trim())).toEqual([
+      "新建任务", "项目", "组织", "能力", "代码开发", "更多知识与工具",
+    ]);
     expect(screen.queryByText("助理")).not.toBeInTheDocument();
   });
 
@@ -65,6 +67,15 @@ describe("Sidebar", () => {
     render(<Sidebar {...base} onNavigate={onNavigate} />);
     fireEvent.click(screen.getByText("项目"));
     expect(onNavigate).toHaveBeenCalledWith("项目");
+  });
+
+  it("组织是直接可见的入口并进入组织页面", () => {
+    const onNavigate = vi.fn();
+    render(<Sidebar {...base} activeNav="组织" onNavigate={onNavigate} />);
+    const entry = screen.getByRole("button", { name: "组织" });
+    expect(entry).toHaveClass("sidebar__nav-item--active");
+    fireEvent.click(entry);
+    expect(onNavigate).toHaveBeenCalledWith("组织");
   });
 
   it("渲染会话列表并可选中", () => {
@@ -259,32 +270,27 @@ describe("Sidebar", () => {
     await waitFor(() => expect(onDeleteSession).toHaveBeenCalledWith("project-session", "/workspace"));
   });
 
-  it("hover「更多」只展示保留的功能入口", () => {
+  it("hover「更多」只展示知识库和定时任务", () => {
     const onNavigate = vi.fn();
     render(<Sidebar {...base} onNavigate={onNavigate} />);
     fireEvent.mouseEnter(screen.getByText("更多").closest(".sidebar__more-wrap")!);
-    expect(screen.getByRole("menu")).toBeInTheDocument();
-    expect(screen.getByText("我的文件")).toBeInTheDocument();
-    expect(screen.getByText("知识库")).toBeInTheDocument();
-    expect(screen.getByText("个人记忆")).toBeInTheDocument();
-    expect(screen.getByText("插件市场")).toBeInTheDocument();
-    expect(screen.getByText("用量统计")).toBeInTheDocument();
+    const menu = screen.getByRole("menu");
+    expect(menu).toBeInTheDocument();
+    expect(within(menu).getByText("知识库")).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "定时任务" })).toBeInTheDocument();
+    expect(within(menu).getAllByRole("menuitem")).toHaveLength(2);
+    for (const settingsEntry of ["我的文件", "个人记忆", "用量统计", "通知渠道", "云存储", "代码开发"]) {
+      expect(within(menu).queryByText(settingsEntry)).not.toBeInTheDocument();
+    }
     for (const removed of ["灵感", "网页预览", "策略设置", "发现"]) {
-      expect(screen.queryByText(removed)).not.toBeInTheDocument();
+      expect(within(menu).queryByText(removed)).not.toBeInTheDocument();
     }
   });
 
-  it("「更多」菜单的个人记忆与插件市场进入稳定路由", () => {
-    const onNavigate = vi.fn();
-    const { rerender } = render(<Sidebar {...base} onNavigate={onNavigate} />);
-    fireEvent.mouseEnter(screen.getByText("更多").closest(".sidebar__more-wrap")!);
-    fireEvent.click(screen.getByText("个人记忆"));
-    expect(onNavigate).toHaveBeenCalledWith("个人记忆");
-
-    rerender(<Sidebar {...base} onNavigate={onNavigate} />);
-    fireEvent.mouseEnter(screen.getByText("更多").closest(".sidebar__more-wrap")!);
-    fireEvent.click(screen.getByText("插件市场"));
-    expect(onNavigate).toHaveBeenCalledWith("插件·市场");
+  it.each(["专家·技能·连接器", "技能", "连接器", "插件·市场", "插件市场"])("能力子页 %s 始终选中同一个侧栏入口", activeNav => {
+    render(<Sidebar {...base} activeNav={activeNav} />);
+    expect(screen.getByRole("button", { name: "能力" })).toHaveClass("sidebar__nav-item--active");
+    expect(screen.getByText("更多").closest("button")).not.toHaveClass("sidebar__nav-item--active");
   });
 
   it("「更多」菜单可进入知识库", async () => {
@@ -298,12 +304,25 @@ describe("Sidebar", () => {
     expect(onNavigate).toHaveBeenCalledWith("知识库");
   });
 
-  it("「更多」菜单可进入代码开发工作台", async () => {
+  it("「更多」中的定时任务进入自动化页面并显示选中状态", () => {
     const onNavigate = vi.fn();
-    const user = userEvent.setup();
+    const { rerender } = render(<Sidebar {...base} onNavigate={onNavigate} />);
+    const trigger = screen.getByRole("button", { name: /更多/ });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: "定时任务" }));
+    expect(onNavigate).toHaveBeenCalledWith("自动化");
+    expect(screen.queryByRole("menu", { name: "更多功能" })).toBeNull();
+
+    rerender(<Sidebar {...base} activeNav="自动化" onNavigate={onNavigate} />);
+    expect(trigger).toHaveClass("sidebar__nav-item--active");
+    fireEvent.click(trigger);
+    expect(screen.getByRole("menuitem", { name: "定时任务" })).toHaveClass("sidebar__more-item--active");
+  });
+
+  it("主导航可进入代码开发工作台", () => {
+    const onNavigate = vi.fn();
     render(<Sidebar {...base} onNavigate={onNavigate} />);
 
-    await user.hover(screen.getByText("更多"));
     fireEvent.click(screen.getByText("代码开发"));
 
     expect(onNavigate).toHaveBeenCalledWith("代码开发");

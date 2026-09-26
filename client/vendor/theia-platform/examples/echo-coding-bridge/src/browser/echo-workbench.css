@@ -1,0 +1,62 @@
+body.echo-embedded {
+    --theia-statusBar-background: #f6f8f9;
+    --theia-statusBar-foreground: #59636c;
+    --theia-statusBar-border: #e5e9eb;
+}
+
+body.theia-dark.echo-embedded {
+    --theia-statusBar-background: #202a2e;
+    --theia-statusBar-foreground: #bbc6c8;
+    --theia-statusBar-border: #354248;
+}
+
+.echo-editor-empty {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    background: var(--theia-editor-background);
+    color: var(--theia-foreground);
+}
+
+.echo-editor-empty[hidden] {
+    display: none;
+}
+
+.echo-editor-empty__content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    max-width: min(360px, calc(100% - 32px));
+    text-align: center;
+}
+
+.echo-editor-empty__content > .codicon {
+    color: var(--theia-descriptionForeground);
+    font-size: 24px;
+}
+
+.echo-editor-empty__content strong {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.echo-editor-empty__content > span:not(.codicon) {
+    color: var(--theia-descriptionForeground);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.echo-editor-empty__content button {
+    margin-top: 4px;
+    padding: 5px 10px;
+    pointer-events: auto;
+    border: 1px solid var(--theia-input-border, var(--theia-widget-border));
+    border-radius: 5px;
+    background: var(--theia-button-secondaryBackground, var(--theia-editor-background));
+    color: var(--theia-button-secondaryForeground, var(--theia-foreground));
+    cursor: pointer;
+}

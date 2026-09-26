@@ -3,7 +3,7 @@ import { PauseIcon } from "@/foundation/components/Icon/icons";
 import { useSessionStore, type ToolCallView } from "@/stores/session-store";
 import { useSessionsStore } from "@/stores/sessions-store";
 import { createMarkdownHostConfig } from "@/lib/markdown-host";
-import { rewindExecute, rewindPoints } from "@/lib/agent-client";
+import { rewindExecute, rewindPoints, setCodingMode } from "@/lib/agent-client";
 import {
   collectSessionArtifacts,
   findToolCall,
@@ -38,11 +38,13 @@ import { useStickToBottom } from "./use-stick-to-bottom";
 import { isGlobalShortcutBlocked } from "@/lib/keyboard-scope";
 import { stripAttachmentTransportContext } from "@/lib/user-message";
 import { AutomationControls } from "./AutomationControls";
+import type { AutomationMode } from "@/lib/automation-client";
 import { useAppDialog } from "./AppDialog";
 import type {
   MessageRetryKind,
   MessageRetrySendRequest,
 } from "@/lib/message-retry";
+import type { SubagentOpenContext, SubagentScrollRestore } from "@/lib/subagent-navigation";
 
 /** Center chat column: scrollable message list + composer pinned at bottom. */
 export function ChatView({
@@ -64,8 +66,10 @@ export function ChatView({
   onToast,
   onSelectExpert,
   onOpenSubagentSession,
+  subagentScrollRestore,
   onNavigateConnectors,
   onOpenKnowledgeBase,
+  onOpenMeetingMinutes,
   onOpenOrganization,
   apiReady = true,
   setupHint,
@@ -108,9 +112,12 @@ export function ChatView({
   onToast?: (msg: string) => void;
   onSelectExpert?: (agent: AgentEntry) => void;
   /** Open the child ACP session behind a subagent record. */
-  onOpenSubagentSession?: (sessionId: string, cwd?: string) => void | Promise<void>;
+  onOpenSubagentSession?: (sessionId: string, cwd: string | undefined, source: SubagentOpenContext) => void | Promise<void>;
+  /** Restore the exact parent row after returning from a child session. */
+  subagentScrollRestore?: SubagentScrollRestore | null;
   onNavigateConnectors?: () => void;
   onOpenKnowledgeBase?: () => void;
+  onOpenMeetingMinutes?: () => void;
   onOpenOrganization?: () => void;
   /** False when this session has no configured model or usable credential. */
   apiReady?: boolean;
@@ -131,11 +138,13 @@ export function ChatView({
   const error = useSessionStore((s) => s.error);
   const plan = useSessionStore((s) => s.plan);
   const sessionId = useSessionStore((s) => s.sessionId);
+  const agentMode = useSessionStore((s) => s.agentMode);
   const control = useSessionStore((s) => s.control);
   const resumeSession = useSessionStore((s) => s.resumeSession);
   const awaitingQuestion = Boolean(useQuestionStore(selectQuestionForSession(sessionId)));
   const mentionCandidates = useWorkspaceMentions(cwd);
   // 会话内查找(对齐 EchoAgent chat-search)。
+  const timeline = useMemo(() => buildTimeline(messages), [messages]);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [findOccurrences, setFindOccurrences] = useState<FindOccurrence[]>([]);
@@ -149,6 +158,29 @@ export function ChatView({
   // 子代理运行时面板(对齐 EchoAgent team-runtime)。
   const [subagentsOpen, setSubagentsOpen] = useState(false);
   const [teamsOpen, setTeamsOpen] = useState(false);
+  const [automationModeChanging, setAutomationModeChanging] = useState(false);
+  const automationMode: AutomationMode = agentMode === "browser_use" || agentMode === "computer_use"
+    ? agentMode
+    : "default";
+  const handleAutomationModeChange = useCallback(async (nextMode: AutomationMode) => {
+    if (!sessionId || streaming || automationModeChanging || nextMode === automationMode) return;
+    setAutomationModeChanging(true);
+    try {
+      await setCodingMode(sessionId, nextMode === "default" ? "agent" : nextMode);
+      // CurrentModeUpdate remains authoritative; this immediate local update
+      // avoids a visible delay on runtimes that acknowledge asynchronously.
+      useSessionStore.getState().setAgentMode(nextMode, sessionId);
+      onToast?.(nextMode === "default"
+        ? "已关闭网页和电脑操作"
+        : nextMode === "browser_use"
+          ? "已启用操作网页"
+          : "已启用操作电脑");
+    } catch (error) {
+      onToast?.(`切换工具失败：${friendlyError(error)}`);
+    } finally {
+      setAutomationModeChanging(false);
+    }
+  }, [automationMode, automationModeChanging, onToast, sessionId, streaming]);
   const handlePause = useCallback(async () => {
     if (!sessionId || !streaming) return;
     await onCancel("pause");
@@ -376,6 +408,10 @@ export function ChatView({
     setPreviewPath(null);
   }, [sessionId]);
 
+  useEffect(() => {
+    setSubagentsOpen(subagentScrollRestore?.parentSessionId === sessionId);
+  }, [sessionId, subagentScrollRestore?.sequence]);
+
   // Auto-open subagent panel when a subagent starts running.
   const liveSubagentCount = useSubagentStore((s) =>
     sessionId ? s.getForSession(sessionId).filter((a) => a.status === "running").length : 0,
@@ -416,12 +452,56 @@ export function ChatView({
     scrollRef,
     contentRef,
     following,
+    pauseFollowing,
     scrollToBottom,
   } = useStickToBottom({
     contentVersion: messages,
     streaming,
     sessionId,
   });
+
+  const restoredSequenceRef = useRef<number | null>(null);
+  const restoreSubagentRow = useCallback((key: string) => {
+    if (!subagentScrollRestore || subagentScrollRestore.parentSessionId !== sessionId
+      || restoredSequenceRef.current === subagentScrollRestore.sequence) return;
+    const viewport = scrollRef.current;
+    const row = Array.from(viewport?.querySelectorAll<HTMLElement>("[data-subagent-key]") ?? [])
+      .find((node) => node.dataset.subagentKey === key);
+    if (!viewport || !row) return;
+    pauseFollowing();
+    const actualOffset = row.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    viewport.scrollTop += actualOffset - subagentScrollRestore.rowOffset;
+    restoredSequenceRef.current = subagentScrollRestore.sequence;
+  }, [pauseFollowing, scrollRef, sessionId, subagentScrollRestore]);
+
+  useLayoutEffect(() => {
+    if (!subagentScrollRestore || subagentScrollRestore.parentSessionId !== sessionId
+      || restoredSequenceRef.current === subagentScrollRestore.sequence) return;
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    // The transcript may still be replaying. Preserve the old position first,
+    // then refine it to the row once the subagent list is rendered.
+    pauseFollowing();
+    viewport.scrollTop = subagentScrollRestore.scrollTop;
+    restoreSubagentRow(subagentScrollRestore.subagentKey);
+  }, [messages, pauseFollowing, restoreSubagentRow, scrollRef, sessionId, subagentScrollRestore]);
+
+  const openSubagentSession = useCallback((childSessionId: string, childCwd: string | undefined, subagentKey: string) => {
+    if (!sessionId || !onOpenSubagentSession) return;
+    const viewport = scrollRef.current;
+    const row = Array.from(viewport?.querySelectorAll<HTMLElement>("[data-subagent-key]") ?? [])
+      .find((node) => node.dataset.subagentKey === subagentKey);
+    const rowOffset = viewport && row
+      ? row.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+      : 0;
+    return onOpenSubagentSession(childSessionId, childCwd, {
+      parentSessionId: sessionId,
+      parentCwd: cwd,
+      subagentKey,
+      scrollTop: viewport?.scrollTop ?? 0,
+      rowOffset,
+    });
+  }, [cwd, onOpenSubagentSession, scrollRef, sessionId]);
 
   // 会话内查找:Ctrl/Cmd+F 打开。
   useEffect(() => {
@@ -696,13 +776,15 @@ export function ChatView({
                 <SubagentPanel
                   messages={messages}
                   cwd={cwd}
-                  onOpenSession={onOpenSubagentSession}
+                  onOpenSession={onOpenSubagentSession ? openSubagentSession : undefined}
+                  restorePoint={subagentScrollRestore}
+                  onRestoreReady={restoreSubagentRow}
                 />
               )}
               {teamsOpen && (
                 <TeamStatusView messages={messages} />
               )}
-              {buildTimeline(messages).map((node) => {
+              {timeline.map((node) => {
                 // 时间线分隔符(对齐 EchoAgent message-timeline):日期/模型切换分隔。
                 // 当前 ChatMessage 无 modelId/createdAt,无分隔符时仅渲染消息节点。
                 if (node.kind === "date-divider") {
@@ -883,8 +965,12 @@ export function ChatView({
             externalTextNonce={resendNonce}
             onSelectExpert={onSelectExpert}
             onNavigateConnectors={onNavigateConnectors}
+            automationMode={automationMode}
+            automationModeDisabled={streaming || automationModeChanging}
+            onAutomationModeChange={handleAutomationModeChange}
             knowledgeSessionId={sessionId ?? undefined}
             onOpenKnowledgeBase={onOpenKnowledgeBase}
+            onOpenMeetingMinutes={onOpenMeetingMinutes}
             onOpenOrganization={onOpenOrganization}
             commandSessionId={sessionId ?? undefined}
             commandRefreshKey={commandRefreshKey}

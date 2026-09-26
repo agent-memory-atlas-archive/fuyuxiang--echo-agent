@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { readDurable, writeDurable, isStringMap } from "@/lib/durable-ui-state";
 import type { SessionSummary, SessionStatus } from "@/lib/types";
 import type { WorkspaceInfo } from "@/lib/agent-client";
 import {
@@ -7,6 +8,8 @@ import {
   sessionControlStatus,
 } from "@/lib/session-control";
 import { persistSessionStatus } from "@/lib/session-status-persistence";
+import { touchDraft } from "@/lib/draft-lifecycle";
+import { saveDraftAttachments } from "@/lib/draft-attachments";
 
 /**
  * Sentinel draft keys for sessions that don't have a real sessionId yet.
@@ -120,7 +123,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
   filterStatus: null,
   filterDate: null,
   pendingSessionPatches: {},
-  drafts: {},
+  drafts: readDurable<Record<string, string>>("echoagent.drafts.v1", {}, isStringMap),
 
   setIndependent: (incoming) =>
     set((state) => {
@@ -190,6 +193,8 @@ export const useSessionsStore = create<SessionsState>((set) => ({
     }),
   clearDraft: (id) =>
     set((state) => {
+      saveDraftAttachments(id, []);
+      touchDraft(id);
       if (!Object.prototype.hasOwnProperty.call(state.drafts, id)) return {};
       const next = { ...state.drafts };
       delete next[id];
@@ -252,6 +257,10 @@ export const useSessionsStore = create<SessionsState>((set) => ({
 
   remove: (id, explicitCwd) =>
     set((state) => {
+      // A deletion also invalidates late submission callbacks, including when
+      // the catalog has already been refreshed and no longer contains this id.
+      saveDraftAttachments(id, []);
+      touchDraft(id);
       persistSessionControl(id);
       const removed = state.independent.find((x) => x.sessionId === id);
       const independent = state.independent.filter((x) => x.sessionId !== id);
@@ -280,7 +289,7 @@ export const useSessionsStore = create<SessionsState>((set) => ({
       // If neither the visible lists nor an explicit cwd knew this id, preserve
       // object identity and counts instead of applying a speculative decrement.
       const found = !!removed || !!state.pendingSessionPatches[id];
-      if (!found && !explicitCwd) return {};
+      if (!found && !explicitCwd) return { drafts };
 
       return {
         independent,
@@ -292,3 +301,12 @@ export const useSessionsStore = create<SessionsState>((set) => ({
       };
     }),
 }));
+
+useSessionsStore.subscribe((state, previous) => {
+  if (state.drafts !== previous.drafts) {
+    writeDurable("echoagent.drafts.v1", state.drafts);
+    for (const id of new Set([...Object.keys(state.drafts), ...Object.keys(previous.drafts)])) {
+      if (state.drafts[id] !== previous.drafts[id]) touchDraft(id);
+    }
+  }
+});

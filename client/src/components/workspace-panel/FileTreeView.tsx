@@ -139,6 +139,12 @@ interface FileTreeViewProps {
   topLevelThreshold?: number;
   /** SP2: row height used by the virtual list, in px. */
   virtualItemHeight?: number;
+  /** Case-insensitive substring filter applied to entry.name; empty = no filter. */
+  filter?: string;
+  /** Workspace-relative file index used to discover matches below collapsed folders. */
+  indexedPaths?: string[];
+  /** Invoked when the cwd-empty state "选择其他目录" action is clicked. */
+  onSelectDirectory?: () => void;
 }
 
 export function FileTreeView({
@@ -164,6 +170,9 @@ export function FileTreeView({
   gitStatusByPath,
   topLevelThreshold = 200,
   virtualItemHeight = 26,
+  filter,
+  indexedPaths = [],
+  onSelectDirectory,
 }: FileTreeViewProps) {
   const [loaded, setLoaded] = useState<LoadedMap>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -377,6 +386,39 @@ export function FileTreeView({
   // Flatten visible tree for shift-click range selection. Must be defined
   // BEFORE any conditional return so the hook order is stable across renders.
   const rootEntries = root ? loaded.get(root) ?? [] : [];
+  const filterLower = (filter ?? "").trim().toLowerCase();
+
+  // The workspace index also contains files below collapsed folders. Load the
+  // ancestors of real matches so filtering is useful without first expanding
+  // every directory manually. Broad queries are capped to protect large repos.
+  useEffect(() => {
+    if (!root || !filterLower || indexedPaths.length === 0) return;
+    let cancelled = false;
+    const matches = indexedPaths
+      .filter((path) => path
+        .replace(/\\/g, "/")
+        .split("/")
+        .pop()
+        ?.toLowerCase()
+        .includes(filterLower))
+      .slice(0, 200);
+    void (async () => {
+      for (const relativePath of matches) {
+        const parts = relativePath.replace(/\\/g, "/").split("/").filter(Boolean);
+        parts.pop();
+        let parent = root.replace(/[\\/]+$/, "");
+        for (const part of parts) {
+          parent = `${parent}/${part}`;
+          await loadDir(parent);
+          if (cancelled) return;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [filterLower, indexedPaths, loadDir, root]);
+
   const visibleRows = useMemo(() => {
     const out: VisibleTreeRow[] = [];
     const walk = (entries: DirEntry[] | undefined, depth: number) => {
@@ -401,21 +443,57 @@ export function FileTreeView({
     walk(rootEntries, 0);
     return out;
   }, [rootEntries, expanded, loaded, loadingDirs, errors]);
+  const filteredRows = useMemo(() => {
+    if (!filterLower) return visibleRows;
+    const walk = (entries: DirEntry[] | undefined, depth: number): VisibleTreeRow[] => {
+      if (!entries) return [];
+      const result: VisibleTreeRow[] = [];
+      for (const entry of entries) {
+        const ownMatch = entry.name.toLowerCase().includes(filterLower);
+        if (entry.kind !== "directory") {
+          if (ownMatch) result.push({ kind: "entry", entry, depth });
+          continue;
+        }
+        const childRows = walk(loaded.get(entry.path), depth + 1);
+        if (ownMatch || childRows.length > 0) {
+          result.push({ kind: "entry", entry, depth }, ...childRows);
+        }
+      }
+      return result;
+    };
+    return walk(rootEntries, 0);
+  }, [filterLower, loaded, rootEntries, visibleRows]);
   const visiblePaths = useMemo(
-    () => visibleRows.flatMap((row) => row.kind === "entry" ? [row.entry.path] : []),
-    [visibleRows],
+    () => filteredRows.flatMap((row) => row.kind === "entry" ? [row.entry.path] : []),
+    [filteredRows],
   );
+  const renderedExpanded = useMemo(() => {
+    if (!filterLower) return expanded;
+    const next = new Set(expanded);
+    filteredRows.forEach((row, index) => {
+      const following = filteredRows[index + 1];
+      if (
+        row.kind === "entry"
+        && row.entry.kind === "directory"
+        && following
+        && following.depth > row.depth
+      ) {
+        next.add(row.entry.path);
+      }
+    });
+    return next;
+  }, [expanded, filterLower, filteredRows]);
 
   // SP2: virtualisation + container size hooks must run before any early
   // return so the hook order is stable across renders.
   const treeRef = useRef<HTMLDivElement | null>(null);
   const listHandleRef = useRef<FixedSizeListHandle | null>(null);
   const containerHeight = useElementSize(treeRef, "height");
-  const shouldVirtualize = visibleRows.length >= topLevelThreshold;
+  const shouldVirtualize = filteredRows.length >= topLevelThreshold;
 
   useEffect(() => {
     if (!revealPath || previousRevealKeyRef.current !== revealKey) return;
-    const index = visibleRows.findIndex(
+    const index = filteredRows.findIndex(
       (row) => row.kind === "entry" && normalize(row.entry.path) === normalize(revealPath),
     );
     if (index < 0) return;
@@ -432,7 +510,7 @@ export function FileTreeView({
       node?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [revealKey, revealPath, shouldVirtualize, visibleRows]);
+  }, [revealKey, revealPath, shouldVirtualize, filteredRows]);
 
   if (!root) {
     return (
@@ -454,7 +532,16 @@ export function FileTreeView({
   }
 
   if (rootEntries.length === 0) {
-    return <div className="file-tree__empty">这里还是空的，放些文件进来再开始吧。</div>;
+    return (
+      <div className="file-tree__empty file-tree__empty--cwd-hint">
+        <span>当前工作区 <code>{root}</code> 没有可见文件。</span>
+        <div className="file-tree__empty-actions">
+          {onSelectDirectory && <button type="button" onClick={onSelectDirectory}>
+            选择其他目录
+          </button>}
+        </div>
+      </div>
+    );
   }
 
   const renderTreeNode = (entry: DirEntry, depth = 0, renderChildren = true) => {
@@ -465,7 +552,7 @@ export function FileTreeView({
         depth={depth}
         root={root}
         renderChildren={renderChildren}
-        expanded={expanded}
+        expanded={renderedExpanded}
         loaded={loaded}
         loadingDirs={loadingDirs}
         errors={errors}
@@ -497,7 +584,7 @@ export function FileTreeView({
       {shouldVirtualize && containerHeight && containerHeight > 0 ? (
         <FixedSizeList
           ref={listHandleRef}
-          items={visibleRows}
+          items={filteredRows}
           itemHeight={virtualItemHeight}
           height={containerHeight}
           renderItem={(row) => {
@@ -529,8 +616,32 @@ export function FileTreeView({
             : `${row.kind}:${row.directoryPath}`}
           ariaLabel="工作区文件树"
         />
+      ) : filteredRows.length > 0 ? (
+        filteredRows.map((row) => {
+          if (row.kind === "entry") return renderTreeNode(row.entry, row.depth, false);
+          if (row.kind === "loading") {
+            return (
+              <div
+                key={`loading:${row.directoryPath}`}
+                className="file-tree__node file-tree__node--loading"
+              >
+                …
+              </div>
+            );
+          }
+          return (
+            <button
+              key={`error:${row.directoryPath}`}
+              type="button"
+              className="file-tree__retry"
+              onClick={() => void loadDir(row.directoryPath, true)}
+            >
+              读取失败，点击重试
+            </button>
+          );
+        })
       ) : (
-        rootEntries.map((entry) => renderTreeNode(entry))
+        <div className="file-tree__empty">未找到匹配“{filter}”的文件</div>
       )}
     </div>
   );

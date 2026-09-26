@@ -22,14 +22,15 @@ describe("KnowledgeBasePanel", () => {
     resetKbRegistry();
     localStorage.removeItem("echoagent.knowledge-sources.v1");
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue(undefined);
+    invokeMock.mockImplementation(async (command: string, args?: { path: string }) => command === "filesystem_resource_identity" ? { id: `test-${args?.path}`, canonicalPath: args?.path } : undefined);
   });
 
   it("无 provider 显示未配置", async () => {
     await act(async () => {
       render(<KnowledgeBasePanel />);
     });
-    expect(screen.getByText("未配置知识源")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "还没有添加知识源" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "搜索知识库" })).toBeNull();
   });
 
   it("有 provider 显示源数与名称", async () => {
@@ -40,8 +41,8 @@ describe("KnowledgeBasePanel", () => {
       list: () => [{ id: "1", title: "笔记" }],
     });
     render(<KnowledgeBasePanel />);
-    // 源摘要「1 个源」(异步加载)。
-    await waitFor(() => expect(screen.getByText(/1 个源/)).toBeInTheDocument());
+    // 源摘要异步加载。
+    await waitFor(() => expect(screen.getByText(/1 个知识源/)).toBeInTheDocument());
     // 添加按钮存在。
     expect(screen.getByRole("button", { name: /添加本地文件夹/ })).toBeInTheDocument();
   });
@@ -59,14 +60,14 @@ describe("KnowledgeBasePanel", () => {
           : [{ id: "1", title: "React 指南" }],
     });
     render(<KnowledgeBasePanel />);
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索知识库" }), {
+    fireEvent.change(await screen.findByRole("textbox", { name: "搜索知识库" }), {
       target: { value: "React" },
     });
     await waitFor(() => expect(screen.getByText("React 指南")).toBeInTheDocument());
     expect(screen.getByText("docs")).toBeInTheDocument();
   });
 
-  it("桌面端优先展示向量混合检索与 rerank 结果", async () => {
+  it("桌面端展示后台排序的搜索结果，不展示后台模型细节", async () => {
     registerKbProvider({
       id: "notes",
       label: "个人笔记",
@@ -81,10 +82,11 @@ describe("KnowledgeBasePanel", () => {
       embeddedChunkCount: 3,
       pendingEmbeddingCount: 0,
       lastUpdatedAt: Date.now(),
-      embeddingModel: "BAAI/bge-m3",
-      rerankModel: "BAAI/bge-reranker-v2-m3",
+      embeddingModel: "embed-pro",
+      rerankModel: "rerank-pro",
     };
-    invokeMock.mockImplementation((command: string) => {
+    invokeMock.mockImplementation((command: string, args?: { path: string }) => {
+      if (command === "filesystem_resource_identity") return Promise.resolve({ id: `test-${args?.path}`, canonicalPath: args?.path });
       if (command === "personal_knowledge_index_status") return Promise.resolve(status);
       if (command === "personal_knowledge_search") {
         return Promise.resolve({
@@ -109,14 +111,14 @@ describe("KnowledgeBasePanel", () => {
     });
 
     render(<KnowledgeBasePanel />);
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索知识库" }), {
+    fireEvent.change(await screen.findByRole("textbox", { name: "搜索知识库" }), {
       target: { value: "出差坐高铁能报销吗" },
     });
 
     expect(await screen.findByRole("button", { name: "打开知识条目：差旅政策" })).toBeInTheDocument();
     expect(screen.queryByText("不应出现的旧结果")).toBeNull();
-    expect(screen.getByText("已使用关键词、向量检索和相关性重排")).toBeInTheDocument();
-    expect(screen.getByText(/BAAI\/bge-m3 · BAAI\/bge-reranker-v2-m3/)).toBeInTheDocument();
+    expect(screen.queryByText("已使用关键词、向量检索和相关性重排")).not.toBeInTheDocument();
+    expect(screen.queryByText(/embed-pro · rerank-pro/)).not.toBeInTheDocument();
     expect(invokeMock).toHaveBeenCalledWith("personal_knowledge_search", {
       query: "出差坐高铁能报销吗",
       limit: 20,
@@ -132,7 +134,7 @@ describe("KnowledgeBasePanel", () => {
       list: () => [],
     });
     render(<KnowledgeBasePanel />);
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索知识库" }), {
+    fireEvent.change(await screen.findByRole("textbox", { name: "搜索知识库" }), {
       target: { value: "不存在" },
     });
     await waitFor(() => expect(screen.getByText("无匹配结果")).toBeInTheDocument());
@@ -148,7 +150,7 @@ describe("KnowledgeBasePanel", () => {
       list: () => [{ id: "9", title: "T", url: "https://x/9" }],
     });
     render(<KnowledgeBasePanel onOpen={onOpen} />);
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索知识库" }), {
+    fireEvent.change(await screen.findByRole("textbox", { name: "搜索知识库" }), {
       target: { value: "T" },
     });
     const result = await screen.findByRole("button", { name: "打开知识条目：T" });
@@ -173,7 +175,7 @@ describe("KnowledgeBasePanel", () => {
     });
     render(<KnowledgeBasePanel />);
 
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索知识库" }), {
+    fireEvent.change(await screen.findByRole("textbox", { name: "搜索知识库" }), {
       target: { value: "文档" },
     });
 
@@ -198,7 +200,7 @@ describe("KnowledgeBasePanel", () => {
     });
     render(<KnowledgeBasePanel />);
 
-    fireEvent.change(screen.getByRole("textbox", { name: "搜索知识库" }), {
+    fireEvent.change(await screen.findByRole("textbox", { name: "搜索知识库" }), {
       target: { value: "文档" },
     });
 
@@ -212,10 +214,10 @@ describe("KnowledgeBasePanel", () => {
 
   it("「添加本地文件夹」弹出目录选择并注册稳定 provider", async () => {
     invokeMock.mockImplementation((command: string) =>
-      Promise.resolve(command === "filesystem_pick_directory" ? "/my/notes" : undefined));
+      Promise.resolve(command === "filesystem_pick_directory" ? "/my/notes" : command === "filesystem_resource_identity" ? { id: "test-my-notes", canonicalPath: "/my/notes" } : undefined));
     const before = listKbProviders().length;
     render(<KnowledgeBasePanel onToast={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: /添加本地文件夹/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /添加本地文件夹/ }));
     await waitFor(() => expect(listKbProviders().length).toBe(before + 1));
     expect(listKbProviders()).toEqual([
       expect.objectContaining({ id: expect.stringMatching(/^local-/), label: "本地：notes" }),
@@ -228,7 +230,7 @@ describe("KnowledgeBasePanel", () => {
       Promise.resolve(command === "filesystem_pick_directory" ? null : undefined));
     const before = listKbProviders().length;
     render(<KnowledgeBasePanel onToast={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: /添加本地文件夹/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /添加本地文件夹/ }));
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("filesystem_pick_directory"));
     expect(listKbProviders().length).toBe(before);
   });

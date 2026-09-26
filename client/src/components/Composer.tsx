@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, X, type LucideIcon } from "lucide-react";
+import { draftAttachments, saveDraftAttachments } from "@/lib/draft-attachments";
+import { draftRevision, useDraftRevision } from "@/lib/draft-lifecycle";
+import { useStorageHealth } from "@/lib/durable-ui-state";
+import { Globe2, Mic, Monitor, X, type LucideIcon } from "lucide-react";
 import { ChevronDownIcon, SendPlaneIcon } from "@/foundation/components/Icon/icons";
 import { ModelSelector, type ModelOption } from "./ModelSelector";
 import { ThumbImg } from "./experts-panel/shared/ThumbImg";
@@ -18,6 +21,8 @@ import {
 } from "@/lib/input-history";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { PermissionPicker } from "./PermissionPicker";
+import { AutomationBoundaryNotice, type PermissionRole } from "./AutomationBoundaryNotice";
+import { usePermissionModeStore } from "@/stores/permission-mode-store";
 import { SlashCommands, type SlashCommandsHandle } from "./SlashCommands";
 import { AtMentionMenu, type AtMentionHandle, type AtMentionSymbol } from "@/components/AtMentionMenu";
 import {
@@ -30,6 +35,11 @@ import {
 import { replaceAtToken } from "@/lib/at-commands";
 import { InputAddMenu } from "./InputAddMenu";
 import { KnowledgePicker } from "./KnowledgePicker";
+import {
+  automationCapabilities,
+  type AutomationCapabilities,
+  type AutomationMode,
+} from "@/lib/automation-client";
 import {
   registerAsrProvider,
   getActiveAsr,
@@ -67,6 +77,13 @@ interface AttachmentAdmissionSummary {
   oversized: number;
   countLimited: number;
   totalLimited: number;
+}
+
+interface DraftSubmission {
+  scope: string | undefined;
+  scopeEpoch: number;
+  revision: number;
+  localRevision: number;
 }
 
 function discardUnsentAttachments(paths: string[]) {
@@ -128,6 +145,10 @@ export function Composer({
   onSelectExpert,
   onSelectSkill,
   onNavigateConnectors,
+  automationMode = "default",
+  automationModeDisabled = false,
+  showAutomationModeBadge = false,
+  onAutomationModeChange,
   // Slash-command context and desktop-owned command execution.
   commandSessionId,
   commandRefreshKey,
@@ -145,6 +166,7 @@ export function Composer({
   usageMsgCount,
   knowledgeSessionId,
   onOpenKnowledgeBase,
+  onOpenMeetingMinutes,
   onOpenOrganization,
 }: {
   streaming: boolean;
@@ -220,6 +242,13 @@ export function Composer({
   onSelectSkill?: (skillName: string) => void;
   /** 加号菜单:跳转到连接器管理面板。 */
   onNavigateConnectors?: () => void;
+  /** Optional task-scoped webpage/computer capability exposed from the + menu. */
+  automationMode?: AutomationMode;
+  /** Prevent capability changes while a task is being created or is running. */
+  automationModeDisabled?: boolean;
+  /** Home shows the selected capability as a removable chip; chats use the status toolbar. */
+  showAutomationModeBadge?: boolean;
+  onAutomationModeChange?: (mode: AutomationMode) => void | Promise<void>;
   /** Current session used to request the runtime's context-aware command catalog. */
   commandSessionId?: string;
   /** Incremented when the runtime publishes available_commands_update. */
@@ -244,12 +273,22 @@ export function Composer({
   knowledgeSessionId?: string;
   /** Opens the personal knowledge management page. */
   onOpenKnowledgeBase?: () => void;
+  /** Opens the durable MiniMax recording/transcription workbench. */
+  onOpenMeetingMinutes?: () => void;
   /** Opens organization login/connection management. */
   onOpenOrganization?: () => void;
 }) {
+  const storageErrors = useStorageHealth((state) => state.errors);
+  const draftScopeRef = useRef(draftKey === undefined ? undefined : String(draftKey));
+  const persistedRevision = useDraftRevision(draftKey === undefined ? undefined : String(draftKey));
+  const localRevisionRef = useRef(0);
+  const scopeEpochRef = useRef(0);
+  const isCurrentDraftEpoch = (epoch: number) => mountedRef.current && scopeEpochRef.current === epoch;
   const [text, setText] = useState("");
   const textRef = useRef("");
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [automationSupport, setAutomationSupport] = useState<AutomationCapabilities | null>(null);
+  const automationModeAvailable = Boolean(onAutomationModeChange);
   const attachmentsRef = useRef<string[]>([]);
   const attachmentSizesRef = useRef(new Map<string, number>());
   // Only clipboard blobs created by this Composer are disposable. Picker,
@@ -269,12 +308,13 @@ export function Composer({
     }
     return pending;
   };
-  const rejectAttachmentSubmission = (paths: string[]) => {
+  const rejectAttachmentSubmission = (paths: string[], scope = draftScopeRef.current) => {
     const current = new Set(attachmentsRef.current);
+    const persisted = new Set(scope === undefined ? [] : draftAttachments(scope));
     for (const path of paths) {
-      if (mountedRef.current && current.has(path)) {
+      if (mountedRef.current && draftScopeRef.current === scope && current.has(path)) {
         ownedAttachmentPathsRef.current.add(path);
-      } else {
+      } else if (!persisted.has(path)) {
         discardUnsentAttachments([path]);
       }
     }
@@ -283,21 +323,27 @@ export function Composer({
     next: string[] | ((previous: string[]) => string[]),
   ) => {
     const value = typeof next === "function" ? next(attachmentsRef.current) : next;
+    if (value.length !== attachmentsRef.current.length || value.some((path, index) => path !== attachmentsRef.current[index])) {
+      localRevisionRef.current += 1;
+    }
     attachmentsRef.current = value;
     const retained = new Set(value);
     for (const path of attachmentSizesRef.current.keys()) {
       if (!retained.has(path)) attachmentSizesRef.current.delete(path);
     }
     setAttachments(value);
+    if (draftScopeRef.current !== undefined) saveDraftAttachments(draftScopeRef.current, value);
   };
 
   /** Resolve missing sizes natively and only return a total for a stable list. */
-  const currentAttachmentBytes = async (): Promise<number> => {
+  const currentAttachmentBytes = async (epoch = scopeEpochRef.current): Promise<number> => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!isCurrentDraftEpoch(epoch)) throw new Error("任务已切换");
       const snapshot = [...attachmentsRef.current];
       const missing = snapshot.filter((path) => !attachmentSizesRef.current.has(path));
       if (missing.length > 0) {
         const inspected = await filesystemAttachmentStats(missing);
+        if (!isCurrentDraftEpoch(epoch)) throw new Error("任务已切换");
         if (inspected.rejected.length > 0) {
           throw new Error(inspected.rejected[0].reason);
         }
@@ -326,8 +372,10 @@ export function Composer({
    */
   const admitAttachmentFiles = async (
     files: AttachmentFileStat[],
+    epoch = scopeEpochRef.current,
   ): Promise<AttachmentAdmissionSummary> => {
-    await currentAttachmentBytes();
+    await currentAttachmentBytes(epoch);
+    if (!isCurrentDraftEpoch(epoch)) throw new Error("任务已切换");
     const next = [...attachmentsRef.current];
     // Another admission can finish while this call is waiting for native size
     // inspection. Recompute from the latest ref after the final await so count
@@ -390,6 +438,7 @@ export function Composer({
   };
 
   const addPathAttachments = async (paths: string[]) => {
+    const epoch = scopeEpochRef.current;
     const unique = [...new Set(paths)];
     const supported = unique.filter(
       (path) => classifyAttachment(path) !== AttachmentKind.Unsupported,
@@ -399,12 +448,13 @@ export function Composer({
     const uninspected = supported.length - inspectable.length;
     try {
       const inspected = await filesystemAttachmentStats(inspectable);
-      const summary = await admitAttachmentFiles(inspected.files);
+      const summary = await admitAttachmentFiles(inspected.files, epoch);
       summary.countLimited += uninspected;
       onToast?.(
         attachmentAdmissionMessage(summary, unsupported, inspected.rejected.length),
       );
     } catch (error) {
+      if (!isCurrentDraftEpoch(epoch)) return;
       onToast?.(`添加附件失败：${String(error).replace(/^Error:\s*/, "")}`);
     }
   };
@@ -412,6 +462,9 @@ export function Composer({
   // ctxUsed/ctxTotal 由 ContextUsagePill 异步获取,这里不耦合;徽章在占比未知时
   // 仍显示 +N(新增 token),有占比信息时叠加(此处保守不取,避免与 pill 抢请求)。
   const cost = useMemo(() => estimateSendCost(text), [text]);
+  const boundaryRole: PermissionRole | null = usePermissionModeStore((state) =>
+    commandSessionId ? state.statuses[commandSessionId]?.permissionMode ?? null : state.homeMode,
+  );
   // 输入历史(arrow-key recall,对齐 EchoAgent use-input-history):内存中按发送追加,
   // ↑/↓ 在输入框回溯。draftRef 暂存「回到输入框」时恢复的草稿。
   const histRef = useRef<InputHistory>(createInputHistory(50));
@@ -434,10 +487,24 @@ export function Composer({
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
+    if (!automationModeAvailable || !("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    void automationCapabilities()
+      .then((support) => {
+        if (!disposed) setAutomationSupport(support);
+      })
+      .catch(() => {
+        // Session creation and mode switching still perform an authoritative
+        // backend check. Keep browser previews usable when Tauri IPC is absent.
+      });
+    return () => { disposed = true; };
+  }, [automationModeAvailable]);
+
+  useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      discardOwnedAttachments([...ownedAttachmentPathsRef.current]);
+      if (draftScopeRef.current === undefined) discardOwnedAttachments([...ownedAttachmentPathsRef.current]);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -450,6 +517,7 @@ export function Composer({
   // 回填(draftKey 变化)时不走这里,避免把"恢复出来的字"再当成用户输入回写。
   const updateText = (next: string | ((prev: string) => string)) => {
     const value = typeof next === "function" ? next(textRef.current) : next;
+    if (value !== textRef.current) localRevisionRef.current += 1;
     textRef.current = value;
     setText(value);
     onDraftChangeRef.current?.(value);
@@ -461,6 +529,45 @@ export function Composer({
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [text]);
+
+  // Restore before applying explicit template/edit commands. A same-scope
+  // external reset must reach the textarea; ordinary typing already has the
+  // same value and must not move its selection or rewrite the persisted draft.
+  useEffect(() => {
+    const scope = draftKey === undefined ? undefined : String(draftKey);
+    const changedScope = draftScopeRef.current !== scope;
+    if (changedScope) {
+      scopeEpochRef.current += 1;
+      const recognition = recognitionRef.current;
+      if (recognition?.abort) recognition.abort(); else recognition?.stop();
+      recognitionRef.current = null;
+      setListening(false);
+      ownedAttachmentPathsRef.current.clear();
+      attachmentSizesRef.current.clear();
+      histRef.current = createInputHistory();
+      histCursorRef.current = 0;
+      draftRef.current = "";
+      localRevisionRef.current += 1;
+      setSending(false);
+    }
+    draftScopeRef.current = scope;
+    if (scope !== undefined && textRef.current !== (draft ?? "")) {
+      textRef.current = draft ?? "";
+      setText(textRef.current);
+      setCursorPos(textRef.current.length);
+      localRevisionRef.current += 1;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, draft]);
+
+  useEffect(() => {
+    if (draftScopeRef.current === undefined) return;
+    const restored = draftAttachments(draftScopeRef.current);
+    if (restored.length === attachmentsRef.current.length && restored.every((path, index) => path === attachmentsRef.current[index])) return;
+    attachmentsRef.current = restored;
+    setAttachments(restored);
+    localRevisionRef.current += 1;
+  }, [draftKey, persistedRevision]);
 
   // One-shot seed: when the parent supplies initialText, fill the textarea and
   // focus it so the user can immediately edit/send.
@@ -477,7 +584,8 @@ export function Composer({
   // 受控填充:点击模板/切换标签时由父组件驱动,把内容写入输入框并聚焦。
   // 用 nonce 而不是 externalText 本身做依赖,这样连续点同一个模板也能重新触发。
   useEffect(() => {
-    if (externalTextNonce === undefined) return;
+    // Zero is the idle value used by HomePage and ChatView, not a command.
+    if (externalTextNonce === undefined || externalTextNonce === 0) return;
     const next = externalText ?? "";
     updateText(next); // 同步草稿:模板写入也算当前草稿内容。
     if (externalAttachments !== undefined) {
@@ -500,28 +608,6 @@ export function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalTextNonce]);
 
-  // 持久化草稿回填:切到另一个会话(draftKey 变化)时,把该会话保存的草稿
-  // 写回输入框。注意:这里直接用 setText 而非 updateText,因为这是"恢复"
-  // 而不是"用户输入",不该触发 onDraftChange 把同样的内容再写一遍 store。
-  // 依赖只看 draftKey(通常是 sessionId),draft 值变化不重新触发——否则用户
-  // 每敲一个字都会被这个 effect 重置光标。
-  useEffect(() => {
-    if (draftKey === undefined) return;
-    const recognition = recognitionRef.current;
-    if (recognition?.abort) recognition.abort();
-    else recognition?.stop();
-    recognitionRef.current = null;
-    const next = draft ?? "";
-    textRef.current = next;
-    setText(next);
-    // Attachments are session-scoped. Never carry an unsent local file into
-    // another conversation when ChatView reuses the same Composer instance.
-    discardOwnedAttachments([...ownedAttachmentPathsRef.current]);
-    updateAttachments([]);
-    setCursorPos(next.length);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey]);
-
   // Voice input uses the provider-agnostic ASR registry, with Web Speech as
   // the built-in browser implementation.
   const toggleVoice = async () => {
@@ -529,6 +615,7 @@ export function Composer({
       recognitionRef.current?.stop();
       return;
     }
+    const epoch = scopeEpochRef.current;
     // 优先走 provider-agnostic 注册表(对齐 EchoAgent asr:* 契约):外部 provider
     // 注册后优先级更高；非桌面环境回落到内建 Web Speech。
     ensureWebSpeechAsrRegistered();
@@ -539,13 +626,16 @@ export function Composer({
       let committedText = "";
       const stop = provider.listen("zh-CN", {
         onInterim: (interim) => {
+          if (!isCurrentDraftEpoch(epoch)) return;
           updateText(`${baseText}${separator}${committedText}${interim}`);
         },
         onFinal: (finalDelta) => {
+          if (!isCurrentDraftEpoch(epoch)) return;
           committedText += finalDelta;
           updateText(`${baseText}${separator}${committedText}`);
         },
         onError: (reason) => {
+          if (!isCurrentDraftEpoch(epoch)) return;
           setListening(false);
           const msg = reason === "not-allowed" || reason === "service-not-allowed"
             ? "未授予麦克风或语音识别权限"
@@ -556,7 +646,7 @@ export function Composer({
                 : `语音识别错误：${reason}`;
           onToast?.(msg);
         },
-        onEnd: () => setListening(false),
+        onEnd: () => { if (isCurrentDraftEpoch(epoch)) setListening(false); },
       });
       // 用 recognitionRef 持有 stop 句柄,与既有「再次点击停止」逻辑兼容。
       recognitionRef.current = {
@@ -582,6 +672,7 @@ export function Composer({
     const separator = baseText && !/\s$/.test(baseText) ? " " : "";
     let committedText = "";
     rec.onresult = (event: SpeechRecognitionEventLike) => {
+      if (!isCurrentDraftEpoch(epoch)) return;
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const r = event.results[i];
@@ -593,13 +684,14 @@ export function Composer({
       updateText(`${baseText}${separator}${committedText}${interim}`);
     };
     rec.onerror = (e: SpeechRecognitionErrorEventLike) => {
+      if (!isCurrentDraftEpoch(epoch)) return;
       setListening(false);
       const msg = e.error === "not-allowed"
         ? "未授予麦克风权限"
         : `语音识别错误：${e.error}`;
       onToast?.(msg);
     };
-    rec.onend = () => setListening(false);
+    rec.onend = () => { if (isCurrentDraftEpoch(epoch)) setListening(false); };
     recognitionRef.current = rec;
     try {
       rec.start();
@@ -683,6 +775,7 @@ export function Composer({
   const handlePaste = async (
     event: React.ClipboardEvent<HTMLTextAreaElement>,
   ) => {
+    const epoch = scopeEpochRef.current;
     const items = event.clipboardData?.items;
     const extracted = extractFilesFromClipboard(
       items as unknown as ArrayLike<{ kind: string; type: string; getAsFile(): File | Blob | null }> | undefined,
@@ -700,11 +793,13 @@ export function Composer({
     event.preventDefault();
     let currentBytes: number;
     try {
-      currentBytes = await currentAttachmentBytes();
+      currentBytes = await currentAttachmentBytes(epoch);
     } catch (error) {
+      if (!isCurrentDraftEpoch(epoch)) return;
       onToast?.(`无法检查现有附件：${String(error).replace(/^Error:\s*/, "")}`);
       return;
     }
+    if (!isCurrentDraftEpoch(epoch)) return;
     const preflight: AttachmentAdmissionSummary = {
       added: 0,
       acceptedPaths: [],
@@ -733,8 +828,10 @@ export function Composer({
     const savedStats: AttachmentFileStat[] = [];
     let failed = 0;
     for (const item of supported) {
+      if (!isCurrentDraftEpoch(epoch)) break;
       try {
         const bytes = await blobToBytes(item.blob);
+        if (!isCurrentDraftEpoch(epoch)) break;
         const path = await saveAttachmentBlob({
           bytes,
           mime: item.mime,
@@ -747,7 +844,7 @@ export function Composer({
         // 单张失败不影响其它文件继续落盘。
       }
     }
-    if (!mountedRef.current) {
+    if (!isCurrentDraftEpoch(epoch)) {
       discardUnsentAttachments(saved);
       return;
     }
@@ -761,7 +858,7 @@ export function Composer({
     };
     if (savedStats.length > 0) {
       try {
-        admitted = await admitAttachmentFiles(savedStats);
+        admitted = await admitAttachmentFiles(savedStats, epoch);
       } catch {
         failed += savedStats.length;
       }
@@ -771,6 +868,7 @@ export function Composer({
       }
       discardUnsentAttachments(saved.filter((path) => !accepted.has(path)));
     }
+    if (!isCurrentDraftEpoch(epoch)) return;
     admitted.oversized += preflight.oversized;
     admitted.countLimited += preflight.countLimited;
     admitted.totalLimited += preflight.totalLimited;
@@ -779,21 +877,32 @@ export function Composer({
 
   const [sending, setSending] = useState(false);
 
-  const finishAcceptedSubmission = (submittedText: string) => {
+  const captureSubmission = (): DraftSubmission => ({
+    scope: draftScopeRef.current,
+    scopeEpoch: scopeEpochRef.current,
+    revision: draftScopeRef.current === undefined ? 0 : draftRevision(draftScopeRef.current),
+    localRevision: localRevisionRef.current,
+  });
+
+  const finishAcceptedSubmission = (submittedText: string, submission: DraftSubmission) => {
+    const { scope } = submission;
+    if (scope !== undefined && draftRevision(scope) !== submission.revision) return;
+    if (scope !== draftScopeRef.current || !isCurrentDraftEpoch(submission.scopeEpoch)) {
+      // Consume only the submitted version. A new draft may reuse this scope
+      // after navigation, even when its text happens to be identical.
+      onDraftChange?.("");
+      if (scope !== undefined) saveDraftAttachments(scope, []);
+      return;
+    }
+    if (localRevisionRef.current !== submission.localRevision) return;
     if (submittedText.trim()) {
       histRef.current = pushHistory(histRef.current, submittedText);
       histCursorRef.current = histRef.current.items.length;
       draftRef.current = "";
     }
     discardOwnedAttachments([...ownedAttachmentPathsRef.current]);
-    if (mountedRef.current) {
-      updateText("");
-      updateAttachments([]);
-    } else {
-      // Navigation commands and accepted new-session sends may unmount this
-      // Composer before their promise settles. Clear the persisted draft too.
-      onDraftChangeRef.current?.("");
-    }
+    updateText("");
+    updateAttachments([]);
     onClearSceneTag?.();
   };
 
@@ -802,16 +911,17 @@ export function Composer({
     const action = parseSessionControlIntent(submittedText);
     if (!action) return false;
     setSending(true);
+    const submission = captureSubmission();
     try {
       const result = onControl(action);
       const accepted = result && typeof (result as PromiseLike<boolean | void>).then === "function"
         ? await result
         : result;
-      if (accepted !== false) finishAcceptedSubmission(submittedText);
+      if (accepted !== false) finishAcceptedSubmission(submittedText, submission);
     } catch (error) {
       onToast?.(`${action === "pause" ? "暂停" : "停止"}失败：${String(error).replace(/^Error:\s*/, "")}`);
     } finally {
-      if (mountedRef.current) setSending(false);
+      if (isCurrentDraftEpoch(submission.scopeEpoch)) setSending(false);
     }
     return true;
   };
@@ -836,17 +946,18 @@ export function Composer({
         return;
       }
       setSending(true);
+      const submission = captureSubmission();
       try {
         const result = onClientSlashCommand(invocation);
         const accepted = result && typeof (result as PromiseLike<boolean | void>).then === "function"
           ? await result
           : result;
         if (accepted === false) return;
-        finishAcceptedSubmission(t);
+        finishAcceptedSubmission(t, submission);
       } catch (error) {
         onToast?.(`命令执行失败：${String(error).replace(/^Error:\s*/, "")}`);
       } finally {
-        if (mountedRef.current) setSending(false);
+        if (isCurrentDraftEpoch(submission.scopeEpoch)) setSending(false);
       }
       return;
     }
@@ -858,6 +969,7 @@ export function Composer({
     }
     setSending(true);
     const submittedAttachments = [...attachments];
+    const submission = captureSubmission();
     const pendingOwnedAttachments = beginAttachmentSubmission(submittedAttachments);
     try {
       const result = onSend(body || "请分析附件。", submittedAttachments);
@@ -865,17 +977,17 @@ export function Composer({
         ? await result
         : result;
       if (accepted === false) {
-        rejectAttachmentSubmission(pendingOwnedAttachments);
+        rejectAttachmentSubmission(pendingOwnedAttachments, submission.scope);
         return;
       }
     } catch (error) {
-      rejectAttachmentSubmission(pendingOwnedAttachments);
+      rejectAttachmentSubmission(pendingOwnedAttachments, submission.scope);
       onToast?.(`发送失败：${String(error).replace(/^Error:\s*/, "")}`);
       return;
     } finally {
-      if (mountedRef.current) setSending(false);
+      if (isCurrentDraftEpoch(submission.scopeEpoch)) setSending(false);
     }
-    finishAcceptedSubmission(body);
+    finishAcceptedSubmission(body, submission);
   };
 
   /** Atomically replace the active turn; no manual stop round-trip required. */
@@ -905,6 +1017,7 @@ export function Composer({
     if (sceneTag) body = body ? `【${sceneTag.label}】${body}` : `【${sceneTag.label}】`;
     setSending(true);
     const submittedAttachments = [...attachments];
+    const submission = captureSubmission();
     const pendingOwnedAttachments = beginAttachmentSubmission(submittedAttachments);
     try {
       const result = onSendNow(body || "请分析附件。", submittedAttachments);
@@ -912,15 +1025,15 @@ export function Composer({
         ? await result
         : result;
       if (accepted === false) {
-        rejectAttachmentSubmission(pendingOwnedAttachments);
+        rejectAttachmentSubmission(pendingOwnedAttachments, submission.scope);
         return;
       }
-      finishAcceptedSubmission(body);
+      finishAcceptedSubmission(body, submission);
     } catch (error) {
-      rejectAttachmentSubmission(pendingOwnedAttachments);
+      rejectAttachmentSubmission(pendingOwnedAttachments, submission.scope);
       onToast?.(`立即发送失败：${String(error).replace(/^Error:\s*/, "")}`);
     } finally {
-      if (mountedRef.current) setSending(false);
+      if (isCurrentDraftEpoch(submission.scopeEpoch)) setSending(false);
     }
   };
 
@@ -949,11 +1062,13 @@ export function Composer({
   };
 
   const pickFiles = async () => {
+    const epoch = scopeEpochRef.current;
     try {
       const paths = await filesystemPickFiles({ maxFiles: 20 });
-      if (paths.length === 0) return;
+      if (!isCurrentDraftEpoch(epoch) || paths.length === 0) return;
       await addPathAttachments(paths);
     } catch (error) {
+      if (!isCurrentDraftEpoch(epoch)) return;
       onToast?.(`选择附件失败：${String(error).replace(/^Error:\s*/, "")}`);
     }
   };
@@ -996,6 +1111,7 @@ export function Composer({
         "echo-composer-wrap" + (showMeta ? " echo-composer-wrap--home" : "")
       }
     >
+      {Object.keys(storageErrors).length > 0 && <div role="alert" className="composer-storage-error">本机保存失败，当前输入仍保留在窗口中。请先复制内容或到「设置 → 数据」导出备份，再重试保存。{Object.values(storageErrors)[0]}</div>}
       <section
         className={composerCls}
         onClick={() => {
@@ -1254,6 +1370,9 @@ export function Composer({
             }
           }}
         />
+        {permissionInline && (
+          <AutomationBoundaryNotice role={boundaryRole} automationMode={automationMode} />
+        )}
         <div className="echo-composer__footer">
           <InputAddMenu
             disabled={!apiReady || awaitingQuestion || disabled}
@@ -1270,7 +1389,38 @@ export function Composer({
               }
             }}
             onNavigateConnectors={onNavigateConnectors}
+            meetingMinutesAvailable={models?.some((model) => model.id === modelId && model.providerKind === "minimax")}
+            onOpenMeetingMinutes={onOpenMeetingMinutes}
+            automationMode={automationMode}
+            automationCapabilities={automationSupport}
+            automationModeDisabled={automationModeDisabled}
+            onAutomationModeChange={onAutomationModeChange}
           />
+          {showAutomationModeBadge && automationMode !== "default" && (
+            <span
+              className={`echo-composer__automation-badge echo-composer__automation-badge--${automationMode}`}
+              title={automationMode === "browser_use"
+                ? "本任务可以在独立浏览器中操作网页"
+                : "本任务可以查看屏幕并操作本机应用"}
+            >
+              {automationMode === "browser_use"
+                ? <Globe2 size={14} strokeWidth={1.8} aria-hidden="true" />
+                : <Monitor size={14} strokeWidth={1.8} aria-hidden="true" />}
+              <span>{automationMode === "browser_use" ? "操作网页" : "操作电脑"}</span>
+              <button
+                type="button"
+                className="echo-composer__automation-badge-remove"
+                disabled={automationModeDisabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void onAutomationModeChange?.("default");
+                }}
+                aria-label={`关闭${automationMode === "browser_use" ? "操作网页" : "操作电脑"}`}
+              >
+                <X size={11} strokeWidth={2} />
+              </button>
+            </span>
+          )}
           {activeExpertName && (
             <span className="echo-composer__expert-badge" title={`当前专家：${activeExpertName}`}>
               <ThumbImg name={activeExpertName} local={activeExpertAvatar} size={18} shape="circle" />
@@ -1422,6 +1572,10 @@ export function Composer({
               onSelectWorkspace={onSelectWorkspace!}
             />
           ) : null}
+          <AutomationBoundaryNotice
+            role={boundaryRole}
+            automationMode={automationMode}
+          />
           <PermissionPicker onToast={onToast} sessionId={commandSessionId} />
         </div>
       )}

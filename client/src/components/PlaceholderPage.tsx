@@ -1,10 +1,12 @@
-import { lazy, Suspense, useState, type ReactNode } from "react";
+import "@/styles/panel-navigation.css";
+import { lazy, Suspense, type ReactNode } from "react";
 import { AgentToolIcon } from "@/foundation/components/Icon/icons";
 import type { ProjectMeta } from "@/stores/projects-store";
 import { openExternalUrl, openLocalPath } from "@/lib/agent-client";
 import type { WorkspaceInfo } from "@/lib/agent-client";
 import type { ModelOption } from "./ModelSelector";
 import type { SlashCommandInvocation } from "@/lib/slash-commands";
+import { CAPABILITY_NAV_ITEMS } from "@/lib/capability-navigation";
 
 const ProjectsPanel = lazy(() =>
   import("./ProjectsPanel").then((module) => ({ default: module.ProjectsPanel })),
@@ -15,12 +17,6 @@ const ExpertsPanel = lazy(() =>
 const AutomationPanel = lazy(() =>
   import("./AutomationPanel").then((module) => ({ default: module.AutomationPanel })),
 );
-const ResourcesPanel = lazy(() =>
-  import("./ResourcesPanel").then((module) => ({ default: module.ResourcesPanel })),
-);
-const MyFilesPanel = lazy(() =>
-  import("./MyFilesPanel").then((module) => ({ default: module.MyFilesPanel })),
-);
 const PluginsPanel = lazy(() =>
   import("./PluginsPanel").then((module) => ({ default: module.PluginsPanel })),
 );
@@ -29,6 +25,9 @@ const MarketplacePanel = lazy(() =>
 );
 const KnowledgeBasePanel = lazy(() =>
   import("./KnowledgeBasePanel").then((module) => ({ default: module.KnowledgeBasePanel })),
+);
+const MeetingMinutesPanel = lazy(() =>
+  import("./MeetingMinutesPanel").then((module) => ({ default: module.MeetingMinutesPanel })),
 );
 const UsageQuotaPanel = lazy(() =>
   import("./UsageQuotaPanel").then((module) => ({ default: module.UsageQuotaPanel })),
@@ -47,6 +46,16 @@ const CodingWorkbench = lazy(() =>
     default: module.CodingWorkbench,
   })),
 );
+
+function PanelNavigation({ active, onNavigate }: { active: string; onNavigate?: (label: string) => void }) {
+  const tabs = CAPABILITY_NAV_ITEMS.map(({ route, title }) => [route, title]);
+  return <nav className="panel-navigation panel-navigation--capabilities" aria-label="能力管理">
+    <strong>能力</strong>
+    <div className="panel-navigation__links">{tabs.map(([route, title]) => <button key={route} type="button" aria-current={route === active ? "page" : undefined}
+      onClick={() => onNavigate?.(route)}>{title}</button>)}</div>
+    <button className="panel-navigation__market" type="button" aria-current={active === "插件市场" ? "page" : undefined} onClick={() => onNavigate?.("插件市场")}>浏览市场</button>
+  </nav>;
+}
 
 function DeferredPanel({ children }: { children: ReactNode }) {
   return (
@@ -86,14 +95,13 @@ interface PlaceholderPageProps {
   activeCodingWorkspaceCwd?: string;
   /** Close the current project or remove a path from recent projects. */
   onCloseCodingWorkspace?: (cwd: string) => void;
-  /** Open the OS folder picker to register and activate a project. */
-  onAddCodingWorkspace?: () => void;
   /** Coding Workspace Agent/runtime integration. */
   codingApiReady?: boolean;
   codingModels?: ModelOption[];
   codingModelId?: string;
   onOpenModelSettings?: () => void;
   onExitCodingWorkspace?: () => void;
+  onRegisterCodingLeaveGuard?: (guard: (() => Promise<boolean>) | null) => void;
   /** Start an Agent session for a coding task. Returns the new session id. */
   onStartCodingRun?: (
     root: string,
@@ -123,15 +131,20 @@ interface PlaceholderPageProps {
   ) => Promise<string | undefined>;
   projectModels?: ModelOption[];
   projectDefaultModelId?: string;
+  meetingModelId?: string;
+  meetingModels?: ModelOption[];
+  onOpenMeetingMinutes?: (modelId?: string) => void;
   onClientSlashCommand?: (invocation: SlashCommandInvocation) => boolean | void | Promise<boolean | void>;
   onRenameSession?: (sessionId: string, title: string, cwd?: string) => Promise<void>;
   onArchiveSession?: (sessionId: string, archived: boolean, cwd?: string) => Promise<void>;
   onDeleteSession?: (sessionId: string, cwd?: string) => Promise<void>;
   /** Native automation lifecycle refresh token. */
   automationRefreshSignal?: number;
+  notificationAutomationId?: string;
+  notificationAutomationSequence?: number;
 }
 
-/** EchoAgent 功能面板（项目/组织/专家能力/自动化/个人记忆/插件市场）。 */
+/** EchoAgent 功能面板（项目/组织/专家能力/自动化/知识库/插件市场）。 */
 export function PlaceholderPage({
   label,
   onNavigate,
@@ -145,12 +158,12 @@ export function PlaceholderPage({
   codingWorkspaces,
   activeCodingWorkspaceCwd,
   onCloseCodingWorkspace,
-  onAddCodingWorkspace,
   codingApiReady,
   codingModels,
   codingModelId,
   onOpenModelSettings,
   onExitCodingWorkspace,
+  onRegisterCodingLeaveGuard,
   onStartCodingRun,
   onActivateCodingSession,
   onChangeCodingModel,
@@ -161,11 +174,16 @@ export function PlaceholderPage({
   onStartProjectConversation,
   projectModels,
   projectDefaultModelId,
+  meetingModelId,
+  meetingModels,
+  onOpenMeetingMinutes,
   onClientSlashCommand,
   onRenameSession,
   onArchiveSession,
   onDeleteSession,
   automationRefreshSignal,
+  notificationAutomationId,
+  notificationAutomationSequence,
 }: PlaceholderPageProps) {
   if (label === "项目") {
     return (
@@ -182,6 +200,7 @@ export function PlaceholderPage({
           onClientSlashCommand={onClientSlashCommand}
           onNavigateConnectors={() => onNavigate?.("专家·技能·连接器")}
           onOpenKnowledgeBase={() => onNavigate?.("知识库")}
+          onOpenMeetingMinutes={onOpenMeetingMinutes ?? (() => onNavigate?.("录音转写"))}
           onOpenOrganization={() => onNavigate?.("组织")}
           onOpenSession={onOpenSession}
           onRenameSession={onRenameSession}
@@ -201,7 +220,7 @@ export function PlaceholderPage({
     const initialTab = label === "技能" ? "skills" : label === "连接器" ? "connectors" : "experts";
     return (
       <DeferredPanel>
-        <ExpertsPanel onGoHome={onGoHome} onToast={onToast} initialTab={initialTab} />
+        <div className="panel-section panel-section--capabilities"><PanelNavigation active={label} onNavigate={onNavigate} /><ExpertsPanel onGoHome={onGoHome} onToast={onToast} initialTab={initialTab} hideNavigation /></div>
       </DeferredPanel>
     );
   }
@@ -215,6 +234,8 @@ export function PlaceholderPage({
           onOpenSession={onOpenSession}
           cwd={cwd}
           refreshSignal={automationRefreshSignal}
+          notificationAutomationId={notificationAutomationId}
+          notificationAutomationSequence={notificationAutomationSequence}
         />
       </DeferredPanel>
     );
@@ -231,12 +252,12 @@ export function PlaceholderPage({
           codingWorkspaces={codingWorkspaces ?? []}
           activeCodingWorkspaceCwd={activeCodingWorkspaceCwd ?? ""}
           onCloseCodingWorkspace={onCloseCodingWorkspace}
-          onAddCodingWorkspace={onAddCodingWorkspace}
           apiReady={codingApiReady}
           models={codingModels}
           defaultModelId={codingModelId}
           onOpenSettings={onOpenModelSettings}
           onExit={onExitCodingWorkspace}
+          onRegisterLeaveGuard={onRegisterCodingLeaveGuard}
           sessionId={sessionId}
           onStartRun={onStartCodingRun}
           onActivateSession={onActivateCodingSession}
@@ -251,33 +272,20 @@ export function PlaceholderPage({
   if (label === "插件·市场" || label === "插件市场") {
     return (
       <DeferredPanel>
-        <PluginsMarketTabs
-          key={label}
-          sessionId={sessionId}
-          onToast={onToast}
-          initialTab={label === "插件市场" ? "marketplace" : "plugins"}
-        />
+        <div className="panel-section panel-section--capabilities"><PanelNavigation active={label} onNavigate={onNavigate} />
+          <div className="capabilities-content">
+            {label === "插件市场" ? <MarketplacePanel sessionId={sessionId} onToast={onToast} /> : <PluginsPanel sessionId={sessionId} onToast={onToast} onBrowseMarket={() => onNavigate?.("插件市场")} />}
+          </div>
+        </div>
       </DeferredPanel>
     );
-  }
-
-  if (label === "更多" || label === "资料库" || label === "个人记忆") {
-    return (
-      <DeferredPanel>
-        <ResourcesPanel cwd={cwd} sessionId={sessionId} onToast={onToast} />
-      </DeferredPanel>
-    );
-  }
-
-  if (label === "我的文件") {
-    return <DeferredPanel><MyFilesPanel cwd={cwd} onToast={onToast} /></DeferredPanel>;
   }
 
   // 知识库(可插拔源,对齐 EchoAgent knowledge-base-panel)。
   if (label === "知识库") {
     return (
       <DeferredPanel>
-        <div className="placeholder-page placeholder-page--panel">
+        <div className="placeholder-page placeholder-page--panel knowledge-page">
           <KnowledgeBasePanel
             onOpen={(id, url) => {
               const target = url ?? id;
@@ -289,6 +297,19 @@ export function PlaceholderPage({
             onToast={onToast}
           />
         </div>
+      </DeferredPanel>
+    );
+  }
+
+  if (label === "录音转写") {
+    return (
+      <DeferredPanel>
+        <MeetingMinutesPanel
+          modelId={meetingModelId}
+          models={meetingModels ?? []}
+          onToast={onToast}
+          onOpenModelSettings={onOpenModelSettings}
+        />
       </DeferredPanel>
     );
   }
@@ -333,43 +354,6 @@ export function PlaceholderPage({
       <h2 className="placeholder-page__title">无法打开「{label}」</h2>
       <p className="placeholder-page__desc">当前版本未注册该功能路由，请返回首页重试。</p>
       {onGoHome && <button type="button" className="btn btn--primary" onClick={onGoHome}>返回首页</button>}
-    </div>
-  );
-}
-
-/** 双 tab 容器：插件（已安装）/ 市场（可浏览安装）。 */
-import { PuzzlePieceIcon, RepoIcon } from "@/foundation/components/Icon/icons";
-function PluginsMarketTabs({
-  sessionId,
-  onToast,
-  initialTab = "plugins",
-}: {
-  sessionId?: string;
-  onToast?: (msg: string) => void;
-  initialTab?: "plugins" | "marketplace";
-}) {
-  const [tab, setTab] = useState<"plugins" | "marketplace">(initialTab);
-  return (
-    <div className="plugins-market-wrap">
-      <div className="plugins-market-tabs">
-        <button
-          className={`plugins-market-tab ${tab === "plugins" ? "plugins-market-tab--active" : ""}`}
-          onClick={() => setTab("plugins")}
-        >
-          <PuzzlePieceIcon size="sm" /> 插件
-        </button>
-        <button
-          className={`plugins-market-tab ${tab === "marketplace" ? "plugins-market-tab--active" : ""}`}
-          onClick={() => setTab("marketplace")}
-        >
-          <RepoIcon size="sm" /> 市场
-        </button>
-      </div>
-      {tab === "plugins" ? (
-        <PluginsPanel sessionId={sessionId} onToast={onToast} />
-      ) : (
-        <MarketplacePanel sessionId={sessionId} onToast={onToast} />
-      )}
     </div>
   );
 }

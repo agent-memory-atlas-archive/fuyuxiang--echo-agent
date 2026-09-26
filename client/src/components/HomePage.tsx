@@ -7,11 +7,8 @@ import { useSessionsStore, HOME_DRAFT_KEY } from "@/stores/sessions-store";
 import { usePendingExpertStore } from "@/stores/pending-expert-store";
 import type { SlashCommandInvocation } from "@/lib/slash-commands";
 import { useWorkspaceMentions } from "@/lib/use-workspace-mentions";
-import {
-  automationCapabilities,
-  type AutomationCapabilities,
-  type AutomationMode,
-} from "@/lib/automation-client";
+import type { AutomationMode } from "@/lib/automation-client";
+import { CheckCircle2, FolderOpen, KeyRound, Cpu } from "lucide-react";
 
 /** EchoAgent 首页：单一任务入口。 */
 export function HomePage({
@@ -32,6 +29,7 @@ export function HomePage({
   onSelectExpert,
   onNavigateConnectors,
   onOpenKnowledgeBase,
+  onOpenMeetingMinutes,
   onOpenOrganization,
   commandRefreshKey,
   onClientSlashCommand,
@@ -55,6 +53,7 @@ export function HomePage({
   onSelectExpert?: (agent: AgentEntry) => void;
   onNavigateConnectors?: () => void;
   onOpenKnowledgeBase?: () => void;
+  onOpenMeetingMinutes?: () => void;
   onOpenOrganization?: () => void;
   commandRefreshKey?: number;
   onClientSlashCommand?: (
@@ -66,25 +65,10 @@ export function HomePage({
   // 受控填充 Composer 的内容 + nonce（召唤专家后写入 quick prompt）。
   const [externalText, setExternalText] = useState("");
   const [externalTextNonce, setExternalTextNonce] = useState(0);
-  const [automationSupport, setAutomationSupport] = useState<AutomationCapabilities | null>(null);
   // 首页草稿(哨兵 key):用户离开首页再回来,未发送的字还在。
   const homeDraft = useSessionsStore((s) => s.drafts[HOME_DRAFT_KEY] ?? "");
   const setDraft = useSessionsStore((s) => s.setDraft);
   const mentionCandidates = useWorkspaceMentions(cwd);
-
-  useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
-    let disposed = false;
-    void automationCapabilities()
-      .then((support) => {
-        if (!disposed) setAutomationSupport(support);
-      })
-      .catch(() => {
-        // Storybook/browser previews have no Tauri backend. Session creation
-        // still performs the authoritative backend capability check.
-      });
-    return () => { disposed = true; };
-  }, []);
 
   // Pending expert (set after "召唤" in the detail modal).
   const pendingExpert = usePendingExpertStore((s) => s.expert);
@@ -119,6 +103,69 @@ export function HomePage({
     setExternalTextNonce((n) => n + 1);
   };
 
+  const hasWorkspace = Boolean(cwd);
+
+  if (!apiReady) {
+    return (
+      <div className="home home--setup">
+        <div className="home__inner home__inner--setup">
+          <header className="home__header">
+            <h1 className="home__title">先把 EchoAgent 接到你的工作区</h1>
+          </header>
+          <section className="home-setup" aria-label="首次使用设置">
+            <div className="home-setup__steps">
+              <div className="home-setup__step home-setup__step--active">
+                <span className="home-setup__icon"><Cpu size={18} /></span>
+                <div>
+                  <strong>选择模型</strong>
+                  <span>添加一个可用的模型连接，之后任务都会使用它执行。</span>
+                </div>
+              </div>
+              <div className="home-setup__step home-setup__step--active">
+                <span className="home-setup__icon"><KeyRound size={18} /></span>
+                <div>
+                  <strong>{models?.length ? "检查当前连接" : "确认服务来源并测试"}</strong>
+                  <span>{setupHint || (models?.length ? "已有模型连接暂未就绪，请检查服务状态或切换可用模型。" : "可使用内置服务、组织连接或个人 API。个人连接按服务要求填写 API Key；发送前可查看数据会发往哪里。")}</span>
+                </div>
+              </div>
+              <div className={"home-setup__step" + (hasWorkspace ? " home-setup__step--done" : "")}>
+                <span className="home-setup__icon">
+                  {hasWorkspace ? <CheckCircle2 size={18} /> : <FolderOpen size={18} />}
+                </span>
+                <div>
+                  <strong>选择第一个工作目录</strong>
+                  <span>{hasWorkspace ? cwd : "选择 Agent 可以读取和修改的项目目录。"}</span>
+                </div>
+              </div>
+            </div>
+            <div className="home-setup__actions">
+              <button type="button" className="btn btn--primary" onClick={onOpenSettings}>
+                配置模型
+              </button>
+              {workspaces && workspaces.length > 0 && onSelectWorkspace && (
+                <select
+                  className="home-setup__workspace"
+                  value={cwd ?? ""}
+                  onChange={(event) => {
+                    if (event.target.value) onSelectWorkspace(event.target.value);
+                  }}
+                  aria-label="选择工作目录"
+                >
+                  <option value="">选择工作目录</option>
+                  {workspaces.map((workspace) => (
+                    <option key={workspace.cwd} value={workspace.cwd}>
+                      {workspace.cwd}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="home">
       <div className="home__inner">
@@ -127,46 +174,6 @@ export function HomePage({
         </header>
 
         <section className="home__composer-area">
-          {onTaskModeChange && (
-            <div className="home-mode-picker" aria-label="新任务模式">
-              <span>执行方式</span>
-              <div className="home-mode-picker__options">
-                {([
-                  ["default", "Agent", "对话、分析和文件任务"],
-                  ["browser_use", "Browser Use", "在隔离浏览器中完成网页任务"],
-                  ["computer_use", "Computer Use", "通过截图安全操作桌面"],
-                ] as const).map(([value, label, description]) => (
-                  (() => {
-                    const capability = value === "browser_use"
-                      ? automationSupport?.browser
-                      : value === "computer_use"
-                        ? automationSupport?.computer
-                        : null;
-                    const unavailable = capability?.available === false;
-                    return (
-                  <button
-                    key={value}
-                    type="button"
-                    className={`home-mode-picker__option${(taskMode ?? "default") === value ? " home-mode-picker__option--active" : ""}`}
-                    aria-pressed={(taskMode ?? "default") === value}
-                    disabled={Boolean(creatingSession) || streaming || unavailable}
-                    title={unavailable ? capability?.reason || `${label} 当前不可用` : description}
-                    onClick={() => onTaskModeChange(value)}
-                  >
-                    {label}
-                  </button>
-                    );
-                  })()
-                ))}
-              </div>
-              {(taskMode === "browser_use" && automationSupport?.browser.available === false) && (
-                <small className="home-mode-picker__reason">{automationSupport.browser.reason || "当前设备无法使用 Browser Use"}</small>
-              )}
-              {(taskMode === "computer_use" && automationSupport?.computer.available === false) && (
-                <small className="home-mode-picker__reason">{automationSupport.computer.reason || "当前设备无法使用 Computer Use"}</small>
-              )}
-            </div>
-          )}
           <Composer
             streaming={streaming}
             onSend={onSend}
@@ -194,7 +201,12 @@ export function HomePage({
             onDraftChange={(t) => setDraft(HOME_DRAFT_KEY, t)}
             onSelectExpert={onSelectExpert}
             onNavigateConnectors={onNavigateConnectors}
+            automationMode={taskMode}
+            automationModeDisabled={Boolean(creatingSession) || streaming}
+            showAutomationModeBadge
+            onAutomationModeChange={onTaskModeChange}
             onOpenKnowledgeBase={onOpenKnowledgeBase}
+            onOpenMeetingMinutes={onOpenMeetingMinutes}
             onOpenOrganization={onOpenOrganization}
             commandRefreshKey={commandRefreshKey}
             onClientSlashCommand={onClientSlashCommand}

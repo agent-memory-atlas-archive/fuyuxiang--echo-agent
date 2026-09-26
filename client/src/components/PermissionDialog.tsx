@@ -62,6 +62,8 @@ function preferredOption(options: PermissionOption[], optionId: string): Permiss
 export function PermissionInlineCard({ sessionId }: { sessionId: string | null }) {
   const head = usePermissionStore(selectPermissionForSession(sessionId));
   const dismiss = usePermissionStore((s) => s.dismiss);
+  const priorityRequestId = usePermissionStore((s) => sessionId ? s.priorityRequestBySession[sessionId] : undefined);
+  const consumePriority = usePermissionStore((s) => s.consumePriority);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingAlwaysId, setConfirmingAlwaysId] = useState<string | null>(null);
@@ -76,6 +78,15 @@ export function PermissionInlineCard({ sessionId }: { sessionId: string | null }
   useEffect(() => {
     if (confirmingAlwaysId) confirmCancelRef.current?.focus();
   }, [confirmingAlwaysId]);
+
+  useEffect(() => {
+    if (!sessionId || !head || priorityRequestId !== head.requestId) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`permission-${head.requestId}`)?.focus();
+      consumePriority(head.requestId, sessionId);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [sessionId, head?.requestId, priorityRequestId, consumePriority]);
 
   if (!head) return null;
 
@@ -180,7 +191,9 @@ export function PermissionInlineCard({ sessionId }: { sessionId: string | null }
         className={`btn perm-inline__action${
           isDanger ? " btn--danger" : isPrimary ? " btn--primary" : " btn--ghost"
         }${isTaskAlways ? " perm-inline__action--elevated" : ""}`}
-        title={option.title}
+        title={isTaskAlways
+          ? `${option.title} · 仅影响本任务的常规工具调用；操作电脑仍逐次确认`
+          : option.title}
         onClick={() => {
           if (isTaskAlways) {
             setError(null);
@@ -199,7 +212,7 @@ export function PermissionInlineCard({ sessionId }: { sessionId: string | null }
             {option.kind === "deny_always"
               ? "后续匹配操作自动拒绝"
               : isTaskAlways
-                ? "当前任务后续操作不再询问"
+                ? "常规工具自动批准，自动化副作用仍确认"
                 : "后续匹配操作不再询问"}
           </span>
         )}
@@ -208,7 +221,7 @@ export function PermissionInlineCard({ sessionId }: { sessionId: string | null }
   };
 
   return (
-    <section className="perm-inline" aria-label="操作授权">
+    <section id={`permission-${head.requestId}`} className="perm-inline" aria-label="操作授权" tabIndex={-1}>
       <div className="perm-inline__head">
         <span className="perm-inline__kind">{toolKindLabel(head.toolKind)}</span>
         <span className="perm-inline__title" title={head.title}>{head.title}</span>
@@ -256,7 +269,7 @@ export function PermissionInlineCard({ sessionId }: { sessionId: string | null }
             }}
           >
             <strong>确认提高当前任务的权限？</strong>
-            <span>将允许当前操作，且本任务后续的命令、文件修改等操作不再询问。</span>
+            <span>将允许当前操作，且本任务后续的命令、文件修改等操作不再询问；该范围仅限常规工具，网页与电脑自动化中可能产生副作用的步骤仍会单独确认。</span>
             <div className="perm-inline__confirm-actions">
               <button
                 ref={confirmCancelRef}

@@ -20,6 +20,7 @@ use crate::coding::task::{
     self, AcceptanceCriterion, CodingTask, ExecutionLedgerEvent, PlanIssueSeverity,
     RuntimePlanEntry, TaskNextAction, TaskNode, TaskNodeStatus, TaskPhase,
 };
+use crate::coding::tdd;
 use crate::coding::verification::{self, VerificationRecord, VerificationStatus};
 use crate::shell_fs::FilesystemAccess;
 
@@ -231,6 +232,16 @@ pub fn decide_after_verification(
     changed_file_count: usize,
 ) -> PhaseDecision {
     let effective = latest_per_command(records);
+    if effective
+        .iter()
+        .any(|record| record.status == VerificationStatus::EnvironmentUnavailable)
+    {
+        return PhaseDecision {
+            next_phase: TaskPhase::Blocked,
+            reason: "验证环境未就绪，请安装项目声明的工具或修正验证命令后重试".into(),
+            blocker: Some("验证环境未就绪".into()),
+        };
+    }
     let failing: Vec<&&VerificationRecord> = effective
         .iter()
         .filter(|record| record.status != VerificationStatus::Passed)
@@ -470,6 +481,7 @@ fn apply_unlocked(
             if requirement.is_empty() {
                 return Err("补充要求不能为空".into());
             }
+            tdd::clear(root, task_id)?;
             for criterion in &mut task.acceptance_criteria {
                 criterion.satisfied = false;
                 criterion.evidence.clear();
@@ -551,6 +563,9 @@ fn apply_unlocked(
             }
             if changeset::load(root, task_id).committed_hash.is_some() {
                 return Err("该任务已提交到 Git；请新建任务继续开发，避免交付记录失真".into());
+            }
+            if !tdd::can_resume(root, &task) {
+                return Err("请先运行并记录失败的红灯测试，或说明不适用原因".into());
             }
             if !task
                 .task_nodes
@@ -683,6 +698,35 @@ fn apply_unlocked(
                 PhaseDecision {
                     next_phase: TaskPhase::Delivered,
                     reason: "代码解释已完成，本次只读分析未修改工程文件".into(),
+                    blocker: None,
+                }
+            } else if tdd::should_pause_for_red(root, &task, &change_set) {
+                if !task
+                    .task_nodes
+                    .iter()
+                    .any(|node| node.status == TaskNodeStatus::Running)
+                {
+                    if let Some(node) = task
+                        .task_nodes
+                        .iter_mut()
+                        .rev()
+                        .find(|node| node.status == TaskNodeStatus::Success)
+                    {
+                        node.status = TaskNodeStatus::Running;
+                        node.completed_at = None;
+                    }
+                }
+                workflow_ledger = Some((
+                    "tdd_red_requested",
+                    task.task_nodes
+                        .iter()
+                        .find(|node| node.status == TaskNodeStatus::Running)
+                        .map(|node| node.plan_key.clone()),
+                    "测试文件已写入，等待真实失败的测试结果".into(),
+                ));
+                PhaseDecision {
+                    next_phase: TaskPhase::Paused,
+                    reason: "等待红灯测试验证".into(),
                     blocker: None,
                 }
             } else {
@@ -1881,5 +1925,62 @@ mod tests_v2 {
         let decision = next_after_repair(&[problem], &["same".into()], 1, 3);
         assert_eq!(decision.next_phase, TaskPhase::Blocked);
         assert!(decision.blocker.as_deref().unwrap().contains("相同错误"));
+    }
+
+    #[tokio::test]
+    async fn test_only_turn_pauses_until_real_red_failure_is_recorded() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let mut coding_task = task::create_task(root, "TDD", "Fix behavior").unwrap();
+        coding_task.phase = TaskPhase::Implementing;
+        coding_task.plan_revision = Some("test-plan".into());
+        coding_task.task_nodes[0].status = TaskNodeStatus::Running;
+        coding_task.task_nodes[0].verification_commands = vec!["pnpm test".into()];
+        task::save(root, &coding_task).unwrap();
+        changeset::capture_filesystem_baseline(root, &coding_task.id).unwrap();
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::write(
+            root.join("tests/behavior.test.ts"),
+            "test('red', () => { throw new Error('red') });\n",
+        )
+        .unwrap();
+        changeset::sync_changes(root, &coding_task.id)
+            .await
+            .unwrap();
+        let (paused, _) = apply(
+            root,
+            &coding_task.id,
+            OrchestratorEvent::ImplementationFinished,
+        )
+        .unwrap();
+        assert_eq!(paused.phase, TaskPhase::Paused);
+        assert_eq!(paused.phase_reason.as_deref(), Some("等待红灯测试验证"));
+        assert!(apply(
+            root,
+            &coding_task.id,
+            OrchestratorEvent::InterruptedTaskResumed
+        )
+        .is_err());
+        let mut red = verification::record_from_parts(
+            &coding_task.id,
+            VerificationKind::Test,
+            "pnpm test",
+            Some(1),
+            String::new(),
+            "failed".into(),
+            1,
+            false,
+            false,
+        );
+        red.content_revision = Some(changeset::load(root, &coding_task.id).content_revision());
+        verification::append_record(root, &red).unwrap();
+        tdd::record_red(root, &coding_task.id, &red.id).unwrap();
+        let (resumed, _) = apply(
+            root,
+            &coding_task.id,
+            OrchestratorEvent::InterruptedTaskResumed,
+        )
+        .unwrap();
+        assert_eq!(resumed.phase, TaskPhase::Implementing);
     }
 }

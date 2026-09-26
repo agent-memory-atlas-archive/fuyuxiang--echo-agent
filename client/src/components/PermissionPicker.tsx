@@ -4,7 +4,7 @@
  * EchoAgent 任务级权限的三档选择:
  *  - ask            审批模式:每次工具调用都弹确认
  *  - auto           自动模式:EchoAgent 的分类器自动批准安全操作
- *  - always-approve 始终允许:所有工具调用自动批准
+ *  - always-approve 始终允许:常规工具自动批准；自动化副作用仍独立确认
  *
  * 首页选择只属于即将创建的任务；已有会话通过 sessionId
  * 定向同步，绝不影响其他任务。
@@ -24,6 +24,7 @@ import {
   usePermissionModeStore,
 } from "@/stores/permission-mode-store";
 import { useSessionsStore } from "@/stores/sessions-store";
+import { useSessionStore } from "@/stores/session-store";
 
 const MODES: { id: PermissionMode; label: string; desc: string }[] = [
   {
@@ -39,7 +40,7 @@ const MODES: { id: PermissionMode; label: string; desc: string }[] = [
   {
     id: "always-approve",
     label: "本任务始终允许",
-    desc: "仅当前任务的后续工具调用会自动批准",
+    desc: "仅当前任务的常规工具调用自动批准；操作电脑（点击、拖动、输入、按键）会逐次确认",
   },
 ];
 
@@ -206,6 +207,8 @@ export function PermissionPicker({
         const remaining = result?.remainingPending ?? 0;
         const parts = [`当前任务已切换为“${label}”`];
         if (remaining > 0) parts.push(`当前 ${remaining} 个待审批操作仍需你确认`);
+        const agentMode = useSessionStore.getState().transcripts[sessionId]?.agentMode;
+        if (agentMode === "computer_use") parts.push("电脑操作会逐次确认");
         onToast?.(parts.join("，"));
       } catch (e) {
         onToast?.(`权限模式切换失败：${String(e).replace(/^Error:\s*/, "")}`);
@@ -294,6 +297,7 @@ export function PermissionPicker({
                 key={m.id}
                 ref={m.id === "always-approve" ? alwaysOptionRef : undefined}
                 type="button"
+                data-mode-id={m.id}
                 className={
                   "permission-picker__mode" +
                   (m.id === mode ? " permission-picker__mode--active" : "")
@@ -327,7 +331,7 @@ export function PermissionPicker({
               }}
             >
               <strong>确认提高当前任务的权限？</strong>
-              <span>后续工具调用可能修改文件或执行命令。已经弹出的待审批操作不会被自动批准。</span>
+              <span>后续工具调用可能修改文件或执行命令。已经弹出的待审批操作不会被自动批准；操作电脑不会被自动批准。</span>
               <div className="permission-picker__confirm-actions">
                 <button ref={confirmCancelRef} type="button" className="btn btn--ghost" disabled={busy} onClick={cancelAlwaysConfirmation}>取消</button>
                 <button type="button" className="btn btn--danger" disabled={busy} onClick={() => void applySelection("always-approve")}>

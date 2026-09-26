@@ -263,7 +263,6 @@ enum RunUpdate<'a> {
     Queued,
     Running,
     SessionCreated(&'a str, &'a str),
-    Success(&'a str),
     Failed {
         session_id: Option<&'a str>,
         error: &'a str,
@@ -296,7 +295,6 @@ fn run_update_event(
         RunUpdate::SessionCreated(session_id, _) => {
             ("sessionCreated", "running", Some(session_id), None)
         }
-        RunUpdate::Success(session_id) => ("finished", "success", Some(session_id), None),
         RunUpdate::Failed { session_id, error } => ("finished", "failed", session_id, Some(error)),
     };
     AutomationUpdateEvent {
@@ -802,6 +800,18 @@ pub struct AutomationCompletion {
     pub event: AutomationUpdateEvent,
 }
 
+pub(crate) fn has_run_for_session(session_id: &str) -> bool {
+    let _guard = record_access().lock().unwrap();
+    read_records()
+        .map(|store| {
+            store
+                .records
+                .iter()
+                .any(|record| record.session_id.as_deref() == Some(session_id))
+        })
+        .unwrap_or(true)
+}
+
 /// Finalize an automation run when the bridge receives prompt_complete.
 /// Returns notification metadata when the session belonged to an automation.
 pub fn complete_run_for_session(
@@ -837,6 +847,7 @@ pub fn complete_run_for_session(
         if automation_identity.is_some() {
             if let Err(error) = write_records(&mut records) {
                 tracing::error!(%error, %session_id, "failed to persist automation session completion");
+                return None;
             }
         }
         automation_identity
@@ -1666,22 +1677,29 @@ pub async fn automations_run(
 }
 
 async fn notify_run_failure(app: &AppHandle, automation: &Automation, error: &str) {
-    let body = format!("{}：{}", automation.name, error);
-    let _ = crate::notifications::append(
+    tracing::warn!(automation_id = %automation.id, %error, "automation run failed");
+    let notification_id = crate::notifications::append_with_target(
         crate::notifications::NotificationKind::Error,
-        "自动化任务执行失败",
-        Some(&body),
+        &format!("自动化《{}》运行失败", automation.name),
+        Some(error),
         None,
+        None,
+        Some(&automation.id),
         "error",
-    );
+    )
+    .ok();
     if automation.push_to_we_chat {
-        let _ = crate::notifications::dispatch_automation(
+        let _ = crate::notifications::dispatch_with_desktop_fallback(
             app,
             crate::notifications::NotifyMessage {
                 title: format!("自动化失败：{}", automation.name),
-                body: Some(error.to_string()),
+                body: Some("打开自动化查看运行记录".into()),
                 level: "error".into(),
                 session_id: None,
+                automation_id: Some(automation.id.clone()),
+                notification_id,
+                hidden_title: Some("自动化运行失败".into()),
+                ..Default::default()
             },
         )
         .await;
@@ -1711,8 +1729,8 @@ async fn execute_automation_run(
                         error: &error,
                     },
                 );
+                notify_run_failure(&app, &automation, &error).await;
             }
-            notify_run_failure(&app, &automation, &error).await;
             return;
         }
     };
@@ -1737,8 +1755,8 @@ async fn execute_automation_run(
                         error: &error,
                     },
                 );
+                notify_run_failure(&app, &automation, &error).await;
             }
-            notify_run_failure(&app, &automation, &error).await;
             return;
         }
     };
@@ -1779,8 +1797,8 @@ async fn execute_automation_run(
                         error: &error,
                     },
                 );
+                notify_run_failure(&app, &automation, &error).await;
             }
-            notify_run_failure(&app, &automation, &error).await;
             return;
         }
     };
@@ -1842,19 +1860,8 @@ async fn execute_automation_run(
     };
 
     match result {
-        Ok(Ok(session_id)) => {
-            // prompt_complete normally wins this race in bridge.rs. Repeating
-            // the terminal write makes completion durable even if that UI event
-            // was unavailable during application startup.
-            if record_run_finished(&record_id, true, Some(&session_id), None) {
-                emit_run_update(
-                    &app,
-                    &automation,
-                    &record_id,
-                    &cwd,
-                    RunUpdate::Success(&session_id),
-                );
-            }
+        Ok(Ok((session_id, completion))) => {
+            crate::bridge::handle_prompt_complete(&app, completion);
             release_full_access_session(&app, &tx, &session_id).await;
         }
         Ok(Err(error)) => {
@@ -1881,8 +1888,8 @@ async fn execute_automation_run(
                         error: &error,
                     },
                 );
+                notify_run_failure(&app, &automation, &error).await;
             }
-            notify_run_failure(&app, &automation, &error).await;
         }
         Err(_) => {
             let error = format!(
@@ -1913,8 +1920,8 @@ async fn execute_automation_run(
                         error: &error,
                     },
                 );
+                notify_run_failure(&app, &automation, &error).await;
             }
-            notify_run_failure(&app, &automation, &error).await;
         }
     }
 }
@@ -1929,7 +1936,7 @@ async fn run_automation_once(
     cwd: &Path,
     record_id: &str,
     resolved_model_id: &str,
-) -> Result<String, String> {
+) -> Result<(String, crate::bridge::CompleteEvent), String> {
     crate::policy::require_feature("automations")?;
     crate::policy::require_model(resolved_model_id)?;
     crate::commands::require_runtime_ready(Some(app), state, Some(resolved_model_id))?;
@@ -2016,13 +2023,13 @@ async fn run_automation_once(
         );
     }
     let prompt = automation_prompt(automation, &context);
-    crate::agent_runtime::prompt(tx, &session_id, &prompt)
+    let completion = crate::agent_runtime::prompt_for_automation(tx, &session_id, &prompt)
         .await
         .map_err(|e| {
             state.forget_session_workspace(&session_id);
             e.to_string()
         })?;
-    Ok(session_id)
+    Ok((session_id, completion))
 }
 
 #[derive(Debug, Default)]
@@ -2520,9 +2527,9 @@ pub fn start_scheduler(
     app: AppHandle,
     tx: echo_agent_acp::AcpAgentTx,
     default_cwd: PathBuf,
-) -> tokio::task::JoinHandle<()> {
+) -> tauri::async_runtime::JoinHandle<()> {
     fail_stale_running_records();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         // Give the renderer time to subscribe to interaction events before a
         // recovered unattended turn can request input.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -3151,6 +3158,56 @@ mod tests {
     }
 
     #[test]
+    fn response_and_notification_order_agree_and_claim_only_once() {
+        for response_first in [true, false] {
+            let response = agent_client_protocol::PromptResponse::new(
+                agent_client_protocol::StopReason::Cancelled,
+            )
+            .meta(Some(serde_json::Map::from_iter([(
+                "cancellationCategory".into(),
+                serde_json::json!("HookDenied"),
+            )])));
+            let response_event = crate::agent_runtime::completion_from_prompt_response(
+                response, "session", "prompt",
+            )
+            .unwrap();
+            let notification = crate::bridge::parse_complete_event(
+                &serde_json::json!({"sessionId":"session","promptId":"prompt","stopReason":"cancelled","_meta":{"cancellationCategory":"HookDenied"}}),
+            );
+            let events = if response_first {
+                [response_event, notification]
+            } else {
+                [notification, response_event]
+            };
+            let mut records = RunRecordStore::default();
+            append_run_started(
+                &mut records,
+                &test_automation(),
+                "start",
+                Path::new("/workspace"),
+                None,
+                Some("model"),
+            );
+            let record = records.records.first_mut().unwrap();
+            let mut notifications = 0;
+            for event in events {
+                let ok = crate::bridge::completion_disposition(&event)
+                    == crate::bridge::CompletionDisposition::Success;
+                notifications += usize::from(finalize_record(
+                    record,
+                    ok,
+                    "end",
+                    Some("session"),
+                    event.cancellation_category.as_deref(),
+                ));
+            }
+            assert_eq!(record.status, "failed");
+            assert_eq!(record.error.as_deref(), Some("HookDenied"));
+            assert_eq!(notifications, 1);
+        }
+    }
+
+    #[test]
     fn late_dispatch_completion_cannot_invert_a_terminal_failure() {
         let mut records = RunRecordStore::default();
         let automation = Automation {
@@ -3495,7 +3552,10 @@ mod tests {
             &test_automation(),
             "record",
             Path::new("/workspace"),
-            RunUpdate::Success("session"),
+            RunUpdate::Failed {
+                session_id: Some("session"),
+                error: "stopped",
+            },
         );
         assert!(serde_json::to_value(finished)
             .unwrap()

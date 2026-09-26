@@ -11,7 +11,7 @@ const INITIAL_BACKOFF_MS: u64 = 500;
 pub struct ApiReranker {
     endpoint: String,
     model: String,
-    api_key: String,
+    api_key: Option<String>,
 }
 
 impl ApiReranker {
@@ -22,7 +22,17 @@ impl ApiReranker {
         Some(Self {
             endpoint: config.endpoint.clone()?,
             model: config.model.clone()?,
-            api_key: config.api_key.clone()?,
+            api_key: config.api_key.clone().filter(|key| !key.trim().is_empty()),
+        })
+    }
+
+    fn request_body(&self, query: &str, documents: &[&str], count: usize) -> serde_json::Value {
+        serde_json::json!({
+            "model": self.model,
+            "query": query,
+            "documents": documents,
+            "return_documents": false,
+            "top_n": count,
         })
     }
 
@@ -41,13 +51,7 @@ impl ApiReranker {
             .iter()
             .map(|candidate| candidate.snippet.as_str())
             .collect();
-        let body = serde_json::json!({
-            "model": self.model,
-            "query": query,
-            "documents": documents,
-            "return_documents": false,
-            "top_n": top_n.min(candidates.len()),
-        });
+        let body = self.request_body(query, &documents, top_n.min(candidates.len()));
 
         let mut last_error = String::new();
         for attempt in 0..MAX_RETRIES {
@@ -57,13 +61,12 @@ impl ApiReranker {
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             }
 
-            let response = match echo_agent_http::shared_client()
-                .post(self.endpoint.trim_end_matches('/'))
-                .bearer_auth(&self.api_key)
-                .json(&body)
-                .send()
-                .await
-            {
+            let mut request =
+                echo_agent_http::shared_client().post(self.endpoint.trim_end_matches('/'));
+            if let Some(key) = self.api_key.as_deref() {
+                request = request.bearer_auth(key);
+            }
+            let response = match request.json(&body).send().await {
                 Ok(response) => response,
                 Err(error) => {
                     last_error = format!("request failed: {error}");
@@ -132,6 +135,37 @@ fn reorder_from_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyless_reranker_configuration_is_usable() {
+        let config = MemoryRerankerConfig {
+            enabled: true,
+            endpoint: Some("http://123.56.188.16:8088/v1/rerank".into()),
+            model: Some("rerank-pro".into()),
+            api_key: None,
+        };
+        let client = ApiReranker::from_config(&config).unwrap();
+        assert!(client.api_key.is_none());
+    }
+
+    #[test]
+    fn reranker_requests_only_the_needed_results() {
+        let config = MemoryRerankerConfig {
+            enabled: true,
+            endpoint: Some("https://example.com/v1/rerank".into()),
+            model: Some("generic".into()),
+            ..Default::default()
+        };
+        let body =
+            ApiReranker::from_config(&config)
+                .unwrap()
+                .request_body("query", &["candidate"], 1);
+        assert_eq!(
+            body.get("top_n").and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert!(body.get("top_k").is_none());
+    }
 
     fn candidate(id: &str) -> SearchResult {
         SearchResult {

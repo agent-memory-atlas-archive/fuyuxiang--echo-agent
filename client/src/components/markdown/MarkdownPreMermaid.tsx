@@ -1,5 +1,7 @@
-import { memo, useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { isTauri, invoke } from "@tauri-apps/api/core";
+import { memo, useEffect, useId, useState, type ReactNode } from "react";
 import { CodeBlockActions } from "./CodeBlockActions";
+import { MarkdownPreviewImage } from "./MarkdownPreviewImage";
 import type { MarkdownConfig } from "./types";
 
 type Props = {
@@ -28,16 +30,20 @@ export const MarkdownPreMermaid = memo(function MarkdownPreMermaid({
   theme = "light",
   children,
   onDownloadMermaid,
+  onPreviewMermaid,
   codeBlockActions,
   requestId,
   onCodeBlockAction,
 }: Props) {
   const reactId = useId().replace(/:/g, "");
   const [mode, setMode] = useState<"diagram" | "code">("diagram");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [svg, setSvg] = useState<string | null>(null);
   const [svgUrl, setSvgUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   const code = content || "";
 
@@ -52,15 +58,26 @@ export const MarkdownPreMermaid = memo(function MarkdownPreMermaid({
     let cancelled = false;
     setRendering(true);
     setError(null);
+    setDownloadStatus(null);
 
     (async () => {
       try {
         const mermaid = (await import("mermaid")).default;
+        const secure = new Set(mermaid.mermaidAPI.getConfig().secure ?? []);
+        secure.add("htmlLabels");
+        secure.add("fontFamily");
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
+          // Agent-authored init directives must not switch standalone SVGs
+          // back to HTML labels or inherited fonts.
+          secure: [...secure],
           theme: theme === "dark" ? "dark" : "default",
-          fontFamily: "inherit",
+          // The result is displayed as a standalone SVG image. HTML labels and
+          // inherited fonts can measure differently in the page and the image,
+          // clipping Chinese text inside flowchart nodes and edge labels.
+          htmlLabels: false,
+          fontFamily: '"PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif',
         });
         const id = `md-mermaid-${reactId}-${Date.now()}`;
         const { svg: rendered } = await mermaid.render(id, code);
@@ -99,28 +116,63 @@ export const MarkdownPreMermaid = memo(function MarkdownPreMermaid({
     return () => URL.revokeObjectURL(nextUrl);
   }, [svg]);
 
-  const handleDownload = useMemo(() => {
-    return () => {
-      if (!svg) return;
+  const handleDownload = async () => {
+    if (!svg || downloading) return;
+    setDownloading(true);
+    setDownloadStatus(null);
+    try {
       if (onDownloadMermaid) {
-        onDownloadMermaid(svg, code);
+        await onDownloadMermaid(svg, code);
+        setDownloadStatus("已提交下载");
         return;
       }
-      try {
-        const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "diagram.svg";
-        a.click();
-        URL.revokeObjectURL(url);
-      } catch {
-        /* ignore */
+      if (isTauri()) {
+        const savedPath = await invoke<string | null>("export_text_file", {
+          suggestedName: "diagram.svg",
+          extension: "svg",
+          content: svg,
+        });
+        setDownloadStatus(savedPath ? `已保存：${savedPath}` : "已取消保存");
+        return;
       }
-    };
-  }, [svg, code, onDownloadMermaid]);
+      const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+      try {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "diagram.svg";
+        document.body.appendChild(link);
+        try {
+          link.click();
+        } finally {
+          link.remove();
+        }
+        setDownloadStatus("已发起下载");
+      } finally {
+        // The browser may only start reading the Blob after the click returns.
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+    } catch (downloadError) {
+      setDownloadStatus(`下载失败：${String(downloadError).replace(/^Error:\s*/, "")}`);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const showSource = !complete || mode === "code" || !!error;
+  const viewBox = svg?.match(/\bviewBox\s*=\s*["']([^"']+)["']/i)?.[1]
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const intrinsicSize = viewBox?.length === 4
+    && Number.isFinite(viewBox[2]) && viewBox[2] > 0
+    && Number.isFinite(viewBox[3]) && viewBox[3] > 0
+    ? { width: viewBox[2], height: viewBox[3] }
+    : undefined;
+  const openPreview = () => {
+    if (!svg || !svgUrl) return;
+    if (onPreviewMermaid) onPreviewMermaid(svg, code);
+    else setPreviewOpen(true);
+  };
 
   return (
     <div className="md-code-wrapper md-mermaid-wrapper">
@@ -128,6 +180,19 @@ export const MarkdownPreMermaid = memo(function MarkdownPreMermaid({
         <div className="md-code-header">
           <strong className="md-code-lang">mermaid</strong>
           <div className="md-mermaid-toolbar">
+            {mode === "diagram" && svgUrl ? (
+              <button
+                type="button"
+                className="md-code-action"
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  openPreview();
+                }}
+                title="放大预览图表"
+              >
+                <span className="md-code-action-label">放大</span>
+              </button>
+            ) : null}
             {complete ? (
               <button
                 type="button"
@@ -146,10 +211,11 @@ export const MarkdownPreMermaid = memo(function MarkdownPreMermaid({
               <button
                 type="button"
                 className="md-code-action"
-                onClick={handleDownload}
+                onClick={() => void handleDownload()}
+                disabled={downloading}
                 title="下载 SVG"
               >
-                <span className="md-code-action-label">下载</span>
+                <span className="md-code-action-label">{downloading ? "保存中…" : "下载"}</span>
               </button>
             ) : null}
             <CodeBlockActions
@@ -162,6 +228,7 @@ export const MarkdownPreMermaid = memo(function MarkdownPreMermaid({
             />
           </div>
         </div>
+        {downloadStatus ? <div className="md-mermaid-download-status" role="status" title={downloadStatus}>{downloadStatus}</div> : null}
 
         {showSource ? (
           <pre className="md-code-pre md-mermaid-source">
@@ -172,7 +239,16 @@ export const MarkdownPreMermaid = memo(function MarkdownPreMermaid({
           <div className="md-mermaid-loading">正在渲染图表…</div>
         ) : svg && svgUrl ? (
           <div className="md-mermaid-diagram">
-            <img src={svgUrl} alt="Mermaid 图表" />
+            <MarkdownPreviewImage
+              src={svgUrl}
+              alt="Mermaid 图表"
+              previewTitle="图表预览"
+              previewLabel="放大预览图表"
+              intrinsicSize={intrinsicSize}
+              onPreview={onPreviewMermaid ? () => onPreviewMermaid(svg, code) : undefined}
+              previewOpen={previewOpen}
+              onPreviewOpenChange={setPreviewOpen}
+            />
           </div>
         ) : (
           <pre className="md-code-pre">

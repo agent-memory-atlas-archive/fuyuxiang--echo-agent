@@ -121,6 +121,7 @@ export async function agentAuthStatus(): Promise<AuthStatus> {
 export interface DesktopPreferences {
   /** Keep the native process and Runtime alive when the main window closes. */
   closeToTray: boolean;
+  showNotificationTaskTitle: boolean;
 }
 
 export async function desktopPreferencesGet(): Promise<DesktopPreferences> {
@@ -129,6 +130,10 @@ export async function desktopPreferencesGet(): Promise<DesktopPreferences> {
 
 export async function desktopPreferencesSave(closeToTray: boolean): Promise<DesktopPreferences> {
   return invoke<DesktopPreferences>("desktop_preferences_save", { closeToTray });
+}
+
+export async function desktopNotificationPreviewSave(showTaskTitle: boolean): Promise<DesktopPreferences> {
+  return invoke<DesktopPreferences>("desktop_notification_preview_save", { showTaskTitle });
 }
 
 // NOTE: the backend `agent_new_session` command returns the session id as a
@@ -651,6 +656,7 @@ export async function agentResolvePlanApproval(
 export type ProviderKind =
   | "anthropic"
   | "openai"
+  | "minimax"
   | "deepseek"
   | "qwen"
   | "custom"
@@ -661,7 +667,7 @@ export type ApiBackend = "chat_completions" | "responses" | "messages";
 
 /** HTTP auth header style. Mirrors EchoAgent's AuthScheme enum (snake_case). */
 export type AuthScheme = "bearer" | "x_api_key";
-export type ProviderSource = "personal" | "organization" | "legacy";
+export type ProviderSource = "personal" | "organization" | "builtin" | "legacy";
 
 /**
  * One connection/auth profile — written to `[model_providers.<id>]`. A single
@@ -676,6 +682,8 @@ export interface ModelProviderEntry {
   /** Masked "••••" when read back; the real secret when saving. */
   apiKey?: string;
   baseUrl?: string;
+  /** Explicit approval to send a personal connection over plaintext HTTP. */
+  allowInsecureHttp?: boolean;
   apiBackend?: ApiBackend;
   authScheme?: AuthScheme;
   /** Max context window in tokens, shared by all referencing models. */
@@ -703,6 +711,10 @@ export interface ModelEntry {
   name?: string;
   /** Per-model context-window override (wins over the provider's value). */
   contextWindow?: number;
+  /** Per-model maximum response length, stored as max_completion_tokens. */
+  maxOutputTokens?: number;
+  /** Explicitly remove a saved maximum response length; omitted values keep it. */
+  clearMaxOutputTokens?: boolean;
   managed?: boolean;
 }
 
@@ -1278,14 +1290,17 @@ export interface MemoryConfig {
   watcherEnabled: boolean;
   autoFlushEnabled: boolean;
   dreamEnabled: boolean;
+  retrievalMode?: "local" | "configured" | "builtin";
+  retrievalSummary?: string;
+  revision?: string;
 }
 
 export async function memoryConfigGet(): Promise<MemoryConfig> {
   return invoke<MemoryConfig>("memory_config_get");
 }
 
-export async function memoryConfigSave(memory: MemoryConfig): Promise<MemoryConfig> {
-  return invoke<MemoryConfig>("memory_config_save", { memory });
+export async function memoryConfigSave(memory: Partial<MemoryConfig>, expectedRevision?: string): Promise<MemoryConfig> {
+  return invoke<MemoryConfig>("memory_config_save", { memory, expectedRevision });
 }
 
 /** List memory notes from global + workspace scope. */

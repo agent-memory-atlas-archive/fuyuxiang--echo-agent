@@ -3,6 +3,7 @@ import { useSessionsStore, selectHasFilter } from "@/stores/sessions-store";
 import { useProjectsStore } from "@/stores/projects-store";
 import { useOrgSessionStore } from "@/stores/org-session-store";
 import { IS_MACOS } from "@/lib/platform";
+import { isCapabilityView } from "@/lib/capability-navigation";
 import {
   agentRenameSession,
   agentDeleteSession,
@@ -27,13 +28,8 @@ import {
   PinFilledIcon,
   MoreDotsIcon,
   AddIcon,
-  MyFilesIconV2,
+  BuildingIcon,
   MoreMenuImaKnowledgeIcon,
-  MemoryIcon,
-  ClockIconV2,
-  AgentMailIcon,
-  CloudToolIcon,
-  PluginsIcon,
   Code2Icon,
 } from "@/foundation/components/Icon/icons";
 import { SessionContextMenu } from "./SessionContextMenu";
@@ -42,9 +38,9 @@ const logoMarkUrl = "/app-icon.png";
 
 const NAV = [
   { label: "项目", icon: EchoProjectNavIcon },
-  { label: "组织", icon: MoreMenuImaKnowledgeIcon },
-  { label: "专家·技能·连接器", icon: EchoExpertNavIcon },
-  { label: "自动化", icon: EchoAutomationNavIcon },
+  { label: "组织", icon: BuildingIcon },
+  { label: "专家·技能·连接器", display: "能力", icon: EchoExpertNavIcon },
+  { label: "代码开发", icon: Code2Icon },
 ];
 
 /** Compact, locale-friendly relative time for the sidebar row tail. */
@@ -124,7 +120,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const STATUS_OPTIONS: { value: SessionStatus | null; label: string }[] = [
   { value: null,        label: "全部状态" },
   { value: "working",   label: "进行中" },
-  { value: "completed", label: "已完成" },
+  { value: "completed", label: "本轮结束" },
   { value: "failed",    label: "失败" },
   { value: "paused",    label: "已暂停" },
   { value: "stopped",   label: "已停止" },
@@ -312,7 +308,7 @@ function handleMenuKeyDown(
 /**
  * "更多" 侧栏按钮的弹出菜单 — 对齐 EchoAgent：
  * - hover 打开，向右浮出（不向下盖住会话列表）
- * - 展示本地内容、代码开发、插件市场和系统工具入口。
+ * - 展示知识库和定时任务；个人记忆由设置管理。
  */
 function MoreDropdown({
   onNavigate,
@@ -385,34 +381,12 @@ function MoreDropdown({
   const ITEMS: {
     id: string;
     label: string;
-    group: "内容" | "工具" | "系统";
     icon: React.ReactNode;
     action: () => void;
   }[] = [
     {
-      id: "my_files",
-      label: "我的文件",
-      group: "内容",
-      icon: <MyFilesIconV2 size="md" />,
-      action: () => {
-        setOpen(false);
-        onNavigate("我的文件");
-      },
-    },
-    {
-      id: "personal_memory",
-      label: "个人记忆",
-      group: "内容",
-      icon: <MemoryIcon size="md" />,
-      action: () => {
-        setOpen(false);
-        onNavigate("个人记忆");
-      },
-    },
-    {
       id: "knowledge_base",
       label: "知识库",
-      group: "内容",
       icon: <MoreMenuImaKnowledgeIcon size="md" />,
       action: () => {
         setOpen(false);
@@ -420,61 +394,19 @@ function MoreDropdown({
       },
     },
     {
-      id: "coding_workspace",
-      label: "代码开发",
-      group: "工具",
-      icon: <Code2Icon size="md" />,
+      id: "automation",
+      label: "定时任务",
+      icon: <EchoAutomationNavIcon size="md" />,
       action: () => {
         setOpen(false);
-        onNavigate("代码开发");
-      },
-    },
-    {
-      id: "plugins",
-      label: "插件市场",
-      group: "工具",
-      icon: <PluginsIcon size="md" />,
-      action: () => {
-        setOpen(false);
-        onNavigate("插件·市场");
-      },
-    },
-    {
-      id: "usage_quota",
-      label: "用量统计",
-      group: "系统",
-      icon: <ClockIconV2 size="md" />,
-      action: () => {
-        setOpen(false);
-        onNavigate("用量统计");
-      },
-    },
-    {
-      id: "notify_channels",
-      label: "通知渠道",
-      group: "系统",
-      icon: <AgentMailIcon size="md" />,
-      action: () => {
-        setOpen(false);
-        onNavigate("通知渠道");
-      },
-    },
-    {
-      id: "cloud_storage",
-      label: "云存储",
-      group: "系统",
-      icon: <CloudToolIcon size="md" />,
-      action: () => {
-        setOpen(false);
-        onNavigate("云存储");
+        onNavigate("自动化");
       },
     },
   ];
-  const activeMoreLabel = activeNav === "资料库" ? "个人记忆" : activeNav;
+  const activeMoreLabel = activeNav === "自动化" ? "定时任务" : activeNav;
   const isActive =
     activeNav === "更多" ||
-    ITEMS.some((item) => item.label === activeMoreLabel) ||
-    activeNav === "插件·市场";
+    ITEMS.some((item) => item.label === activeMoreLabel);
 
   return (
     <div
@@ -506,7 +438,7 @@ function MoreDropdown({
       >
         <EchoMoreNavIcon size="md" />
         <span>更多</span>
-        <span className="sidebar__nav-sub">常用工具</span>
+        <span className="sidebar__nav-sub">知识与工具</span>
       </button>
       {open && (
         <div
@@ -520,28 +452,20 @@ function MoreDropdown({
             triggerRef.current?.focus();
           })}
         >
-          {(["内容", "工具", "系统"] as const).map((group) => (
-            <div className="sidebar__more-group" key={group}>
-              <div className="sidebar__more-group-title">{group}</div>
-              {ITEMS.filter((item) => item.group === group).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={
-                    "sidebar__more-item" +
-                    (activeMoreLabel === item.label ||
-                    (item.id === "plugins" && activeNav === "插件·市场")
-                      ? " sidebar__more-item--active"
-                      : "")
-                  }
-                  role="menuitem"
-                  onClick={item.action}
-                >
-                  <span className="sidebar__more-item-icon">{item.icon}</span>
-                  <span className="sidebar__more-item-label">{item.label}</span>
-                </button>
-              ))}
-            </div>
+          {ITEMS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={
+                "sidebar__more-item" +
+                (activeMoreLabel === item.label ? " sidebar__more-item--active" : "")
+              }
+              role="menuitem"
+              onClick={item.action}
+            >
+              <span className="sidebar__more-item-icon">{item.icon}</span>
+              <span className="sidebar__more-item-label">{item.label}</span>
+            </button>
           ))}
         </div>
       )}
@@ -773,7 +697,7 @@ export function Sidebar({
         if (session) upsertSession({ ...session, archived: next });
         useProjectsStore.getState().setSessionArchived(sessionId, next);
         onSessionArchived?.(sessionId, next);
-        onToast?.(next ? "已归档，可在“设置 → 已归档”中恢复" : "已恢复会话");
+        onToast?.(next ? "已归档，可在“设置 → 数据管理 → 已归档”中恢复" : "已恢复会话");
       }
     } catch (e) {
       onToast?.(`${archived ? "归档" : "恢复"}失败：${String(e).replace(/^Error:\s*/, "")}`);
@@ -961,17 +885,17 @@ export function Sidebar({
           <EchoNewTaskIcon size="md" />
           <span>新建任务</span>
         </button>
-        {NAV.map(({ label, icon: Icon }) => (
+        {NAV.map(({ label, display, icon: Icon }) => (
           <button
             key={label}
             className={
               "sidebar__nav-item" +
-              (activeNav === label ? " sidebar__nav-item--active" : "")
+              (activeNav === label || (label === "专家·技能·连接器" && isCapabilityView(activeNav)) ? " sidebar__nav-item--active" : "")
             }
             onClick={() => onNavigate(label)}
           >
             <Icon size="md" />
-            <span>{label}</span>
+            <span>{display ?? label}</span>
           </button>
         ))}
         <MoreDropdown onNavigate={onNavigate} activeNav={activeNav} />

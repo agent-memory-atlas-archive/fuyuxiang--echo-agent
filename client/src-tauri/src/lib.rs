@@ -13,6 +13,7 @@ mod attachment_blob;
 mod attachment_preview;
 mod automation;
 mod automations;
+mod backup;
 mod bridge;
 mod coding;
 mod coding_workspace;
@@ -20,10 +21,12 @@ mod commands;
 mod connector_cli;
 mod connectors_catalog;
 mod desktop_preferences;
+mod desktop_validation;
 mod experts;
 mod ext;
 mod logging;
 mod mcp;
+mod meeting_minutes;
 mod meta;
 mod notifications;
 mod org;
@@ -32,8 +35,10 @@ mod paths;
 mod permission_config;
 mod personal_knowledge;
 mod policy;
+mod process_supervisor;
 mod projects;
 mod providers;
+mod resource_identity;
 mod session_title;
 mod sessions;
 mod shell_fs;
@@ -42,6 +47,7 @@ mod skills;
 mod skills_catalog;
 mod storage;
 mod team_mcp;
+mod theia;
 
 use bridge::{FolderTrusts, Permissions, PlanApprovals, Questions};
 use commands::AppState;
@@ -64,8 +70,21 @@ fn request_graceful_exit(app: tauri::AppHandle) {
 
         let state = app.state::<AppState>();
         automation::shutdown_all().await;
+        app.state::<theia::TheiaServer>().stop();
         commands::stop_agent_runtime(&state).await;
         app.exit(0);
+    });
+}
+
+fn request_graceful_restart(app: tauri::AppHandle) {
+    if !try_begin_exit(&EXIT_IN_PROGRESS) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        automation::shutdown_all().await;
+        app.state::<theia::TheiaServer>().stop();
+        commands::stop_agent_runtime(&app.state::<AppState>()).await;
+        app.restart();
     });
 }
 
@@ -309,17 +328,6 @@ pub fn run() {
     if let Err(error) = paths::initialize_runtime_home() {
         tracing::error!(%error, "failed to initialize EchoAgent runtime home");
     }
-    // 离线租约过期时在 Agent Runtime 启动前移除受管 Skill 注入，
-    // 避免已撤权的长期离线客户继续加载企业能力。
-    org::enforce_skill_lease();
-
-    // Team MCP server（127.0.0.1 streamable-http）：同步 bind 后台 accept。
-    // 必须在任何 new_session 之前 —— 端口即刻写入 BOUND_PORT 供传参。
-    team_mcp::serve();
-    if let Err(error) = org_mcp::clear_persisted_registration() {
-        tracing::warn!(%error, "failed to remove legacy organization MCP registration");
-    }
-
     let builder = tauri::Builder::default();
     // Tauri requires single-instance to be the first registered plugin. A
     // second launch focuses the resident window (which may be tray-hidden)
@@ -333,6 +341,18 @@ pub fn run() {
 
     let app = builder
         .setup(|app| {
+            backup::apply_pending(app.handle()).map_err(std::io::Error::other)?;
+            // 离线租约过期时在 Agent Runtime 启动前移除受管 Skill 注入，
+            // 避免已撤权的长期离线客户继续加载企业能力。
+            org::enforce_skill_lease();
+
+            // Team MCP server（127.0.0.1 streamable-http）：同步 bind 后台 accept。
+            // 必须在任何 new_session 之前 —— 端口即刻写入 BOUND_PORT 供传参。
+            team_mcp::serve();
+            if let Err(error) = org_mcp::clear_persisted_registration() {
+                tracing::warn!(%error, "failed to remove legacy organization MCP registration");
+            }
+
             // Register the bounded, application-owned paste store so all
             // supported historical attachments remain previewable after a
             // process restart without exhausting exact-file grants.
@@ -346,7 +366,12 @@ pub fn run() {
             // The authenticated knowledge bridge is reachable on loopback for
             // personal local knowledge. Organization tools are added only after
             // a verified login and shared-scope bootstrap.
-            automation::serve(app.handle().clone());
+            if let Err(error) = automation::serve(app.handle().clone()) {
+                // Automation is an optional capability. Keep the desktop usable
+                // and expose the degraded state through automation_capabilities
+                // instead of aborting the native launch callback.
+                tracing::error!(%error, "automation MCP server failed to start");
+            }
             org_mcp::serve(app.handle().clone());
             org::start_background_sync(app.handle().clone());
             personal_knowledge::start_background_index(app.handle().clone());
@@ -358,15 +383,27 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
+        .manage(backup::BackupState::default())
         .manage(Permissions::new())
         .manage(Questions::new())
         .manage(PlanApprovals::new())
         .manage(FolderTrusts::new())
         .manage(shell_fs::FilesystemAccess::new())
         .manage(coding_workspace::CodingProcesses::new())
+        .manage(theia::TheiaServer::default())
         .manage(coding::watcher::WatcherRegistry::default())
         .manage(org::shared_state())
         .invoke_handler(tauri::generate_handler![
+            desktop_validation::desktop_validation_ready,
+            desktop_preferences::desktop_notification_preview_save,
+            notifications::notification_take_pending_opens,
+            notifications::notification_set_visible_session,
+            backup::backup_export,
+            backup::backup_inspect,
+            backup::backup_restore,
+            backup::backup_restored_ui,
+            backup::backup_acknowledge_ui,
+            backup::backup_last_error,
             // session lifecycle
             commands::agent_init,
             commands::agent_auth_status,
@@ -515,6 +552,21 @@ pub fn run() {
             // send, thumbnails, ACP metadata) keeps working.
             attachment_blob::save_attachment_blob,
             attachment_blob::discard_attachment_blob,
+            // Durable long-form recording, MiniMax ASR, minutes and exports.
+            meeting_minutes::meeting_create,
+            meeting_minutes::meeting_append_pcm,
+            meeting_minutes::meeting_set_paused,
+            meeting_minutes::meeting_finish_recording,
+            meeting_minutes::meeting_import_audio,
+            meeting_minutes::meeting_process,
+            meeting_minutes::meeting_regenerate_minutes,
+            meeting_minutes::meeting_update,
+            meeting_minutes::meeting_list,
+            meeting_minutes::meeting_get,
+            meeting_minutes::meeting_job_active,
+            meeting_minutes::meeting_export,
+            meeting_minutes::meeting_delete,
+            meeting_minutes::meeting_open_audio,
             // connector marketplace (live from a local EchoAgent marketplace dir)
             connectors_catalog::connectors_default_root,
             connectors_catalog::connectors_list_roots,
@@ -586,6 +638,7 @@ pub fn run() {
             automations::automation_records_archive,
             automations::automation_records_delete,
             // shell / filesystem (markdown links, path click, apply write)
+            resource_identity::filesystem_resource_identity,
             shell_fs::open_url,
             shell_fs::filesystem_pick_directory,
             shell_fs::filesystem_pick_files,
@@ -652,6 +705,14 @@ pub fn run() {
             coding::delivery::coding_delivery_commit_input,
             coding::delivery::coding_delivery_pr_input,
             coding::delivery::coding_git_commit,
+            coding::delivery::coding_delivery_commit_hunks,
+            coding::isolation::coding_isolation_create,
+            coding::isolation::coding_isolation_info,
+            coding::isolation::coding_isolation_integrate,
+            coding::review::coding_review_confirm,
+            coding::tdd::coding_tdd_status,
+            coding::tdd::coding_tdd_record_red,
+            coding::tdd::coding_tdd_waive,
             coding_workspace::coding_analyze_workspace,
             coding_workspace::coding_git_snapshot,
             coding_workspace::coding_git_diff,
@@ -669,6 +730,7 @@ pub fn run() {
             coding_workspace::coding_terminal_write,
             coding_workspace::coding_terminal_resize,
             coding_workspace::coding_terminal_close,
+            theia::coding_theia_start,
             // durable local project metadata (renderer localStorage is only a cache)
             projects::projects_load,
             projects::projects_save,
