@@ -246,6 +246,7 @@ function Shell() {
   const notificationAutomationSequenceRef = useRef(0);
   const [commandRefreshKey, setCommandRefreshKey] = useState(0);
   const [placeholderView, setPlaceholderView] = useState<string | null>(null);
+  const [createExpertRequested, setCreateExpertRequested] = useState(false);
   const [meetingLaunchModelId, setMeetingLaunchModelId] = useState<string | undefined>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
@@ -253,6 +254,7 @@ function Shell() {
   const newSessionModelOverrideRef = useRef<string | undefined>(undefined);
   const recommendedModelIdRef = useRef<string | undefined>(undefined);
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [modelCatalogLoading, setModelCatalogLoading] = useState(true);
   const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
   const [modelSwitching, setModelSwitching] = useState(false);
   const [loadingSession, setLoadingSession] = useState<{ sessionId: string; generation: number } | null>(null);
@@ -496,6 +498,7 @@ function Shell() {
    */
   const refreshModels = useCallback(async (preferredDefaultId?: string) => {
     const generation = ++modelCatalogGenerationRef.current;
+    setModelCatalogLoading(true);
     setModelCatalogError(null);
     try {
       // The status check may expire an organization model lease and remove its
@@ -549,6 +552,10 @@ function Shell() {
       if (modelCatalogGenerationRef.current !== generation) return;
       // Non-fatal — the picker keeps its previous list and exposes a retry.
       setModelCatalogError(friendlyError(error));
+    } finally {
+      if (modelCatalogGenerationRef.current === generation) {
+        setModelCatalogLoading(false);
+      }
     }
   }, [sessionsStore]);
 
@@ -1108,6 +1115,7 @@ function Shell() {
   };
   const navigateNow = (label: string) => {
     setNotificationAutomationOpen(null);
+    if (label !== "专家·技能·连接器") setCreateExpertRequested(false);
     if (label === "个人记忆" || label === "资料库" || label === "更多") {
       openSettings("personal-memory");
       return;
@@ -1140,16 +1148,24 @@ function Shell() {
     sessionStore.getState().reset();
     setCurrentModelId(resolveConfiguredModelId(models, newSessionModelOverrideRef.current, init?.auth.defaultModelId));
   };
-  const handleNavigate = (label: string) => {
+  const navigateWithGuard = (label: string, afterNavigate?: () => void) => {
     if (placeholderView === "代码开发" && label !== "代码开发"
         && label !== "用量统计" && label !== "通知渠道" && label !== "云存储"
         && codingLeaveGuardRef.current) {
       void codingLeaveGuardRef.current().then((allowed) => {
-        if (allowed) navigateNow(label);
+        if (allowed) {
+          navigateNow(label);
+          afterNavigate?.();
+        }
       });
       return;
     }
     navigateNow(label);
+    afterNavigate?.();
+  };
+  const handleNavigate = (label: string) => navigateWithGuard(label);
+  const handleCreateExpert = () => {
+    navigateWithGuard("专家·技能·连接器", () => setCreateExpertRequested(true));
   };
   const handlePlaceholder = (label: string) => {
     // Route a few sidebar shortcut buttons to real panels instead of toasts.
@@ -2044,10 +2060,12 @@ function Shell() {
     // don't (first open / post-restart) the upcoming replay fills the empty
     // transcript. Either way the focused mirror is refreshed in one step.
     sessionStore.getState().setSession(sessionId);
+    let historyLoaded = false;
     try {
       // Load with the session's own cwd. Opening history must not re-aim the
       // working directory selected for the next new task.
       const loadedModelId = await agentLoadSession(sessionId, entry.cwd);
+      historyLoaded = true;
       if (selectionGenerationRef.current !== generation) {
         if (strict) throw new Error("任务打开已被新的导航操作取代");
         return;
@@ -2075,6 +2093,13 @@ function Shell() {
       }
       if (strict) throw e;
     } finally {
+      // Historical replay can omit its terminal turn update. A replay-created
+      // assistant must not keep the Composer in a running state after load.
+      // Cached live turns are protected by finalizeIncompleteReplay itself.
+      sessionStore.getState().finalizeIncompleteReplay(
+        sessionId,
+        historyLoaded && findSessionSummary(sessionId)?.status === "completed",
+      );
       setLoadingSession((pending) => pending?.generation === generation ? null : pending);
       // Replay window is over: a *new* turn's updates for this session must be
       // ingested again. (No-op when there was no cached transcript to suppress.)
@@ -2701,6 +2726,8 @@ function Shell() {
                   onNavigate={handleNavigate}
                   onOpenSession={handleSelectSession}
                   onGoHome={handleGoHome}
+                  createExpertRequested={createExpertRequested}
+                  onCreateExpertRequestHandled={() => setCreateExpertRequested(false)}
                   onStartOrganizationConversation={handleStartOrganizationConversation}
                   onToast={showToast}
                   cwd={placeholderView === "代码开发"
@@ -2792,6 +2819,7 @@ function Shell() {
                   onSend={handleSendNew}
                   streaming={streaming}
                   apiReady={init.auth.ready && modelConfigured}
+                  modelLoading={modelCatalogLoading && models.length === 0}
                   setupHint={init.auth.reason}
                   creatingSession={creatingSession}
                   sendError={homeSendError}
@@ -2892,7 +2920,7 @@ function Shell() {
         refreshSignal={taskRefreshSignal}
         onToast={showToast}
       />
-      <SecondarySidebar onSelectExpert={handleStartWithExpert} onToast={showToast} />
+      <SecondarySidebar onSelectExpert={handleStartWithExpert} onCreateExpert={handleCreateExpert} onToast={showToast} />
     </div>
   );
 }

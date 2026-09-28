@@ -22,13 +22,16 @@ mod connector_cli;
 mod connectors_catalog;
 mod desktop_preferences;
 mod desktop_validation;
+mod document_export;
 mod experts;
 mod ext;
 mod logging;
 mod mcp;
+mod meeting_capture;
 mod meeting_minutes;
 mod meta;
 mod notifications;
+mod office_mcp;
 mod org;
 mod org_mcp;
 mod paths;
@@ -372,6 +375,9 @@ pub fn run() {
                 // instead of aborting the native launch callback.
                 tracing::error!(%error, "automation MCP server failed to start");
             }
+            if let Err(error) = office_mcp::serve(app.handle().clone()) {
+                tracing::error!(%error, "office MCP server failed to start");
+            }
             org_mcp::serve(app.handle().clone());
             org::start_background_sync(app.handle().clone());
             personal_knowledge::start_background_index(app.handle().clone());
@@ -489,6 +495,11 @@ pub fn run() {
             org::org_list_scopes,
             org::org_submit_document,
             org::org_document_submissions_mine,
+            org::org_document_submissions_mine_page,
+            org::org_remove_own_submission,
+            org::org_preview_document,
+            org::org_download_document,
+            org::org_scan_document_folder,
             org::org_list_documents,
             org::org_list_memories,
             org::org_memory_promotions_mine,
@@ -554,6 +565,12 @@ pub fn run() {
             attachment_blob::discard_attachment_blob,
             // Durable long-form recording, MiniMax ASR, minutes and exports.
             meeting_minutes::meeting_create,
+            meeting_capture::meeting_capture_support,
+            meeting_capture::meeting_capture_start,
+            meeting_capture::meeting_capture_status,
+            meeting_capture::meeting_capture_pause,
+            meeting_capture::meeting_capture_stop,
+            meeting_minutes::meeting_check_connection,
             meeting_minutes::meeting_append_pcm,
             meeting_minutes::meeting_set_paused,
             meeting_minutes::meeting_finish_recording,
@@ -565,6 +582,7 @@ pub fn run() {
             meeting_minutes::meeting_get,
             meeting_minutes::meeting_job_active,
             meeting_minutes::meeting_export,
+            document_export::document_export,
             meeting_minutes::meeting_delete,
             meeting_minutes::meeting_open_audio,
             // connector marketplace (live from a local EchoAgent marketplace dir)

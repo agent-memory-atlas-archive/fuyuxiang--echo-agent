@@ -22,6 +22,7 @@ import {
   type SessionControlAction,
 } from "@/lib/session-control";
 import { terminalSessionStatus } from "@/lib/turn-status";
+import { officeReceiptFromRawOutput, type DocumentExportReceipt } from "@/lib/document-export";
 
 /**
  * A single chat message in the transcript the UI renders.
@@ -72,6 +73,8 @@ export interface ToolCallView {
   status: "in_progress" | "completed" | "failed";
   content: ToolCallUpdate["content"];
   rawInput?: unknown;
+  /** Native Office receipt derived from the Runtime's trusted MCP rawOutput. */
+  officeReceipt?: DocumentExportReceipt;
 }
 
 interface Usage {
@@ -200,8 +203,10 @@ interface SessionState {
   clearReplaySuppression: (id?: string) => void;
   /** Finish only a replay-created, unterminated historical tail after
    *  agentLoadSession returns. A process exit can leave the durable log at a
-   *  tool_call with no turn_completed event; that must not look live forever. */
-  finalizeIncompleteReplay: (id?: string) => void;
+   *  tool_call with no turn_completed event; that must not look live forever.
+   *  A persisted completed status confirms the turn ended normally even when
+   *  the replay omitted its terminal update. */
+  finalizeIncompleteReplay: (id?: string, knownCompleted?: boolean) => void;
 
   // --- transcript ops ---
   /** Append a user message (sent optimistically before the round-trip). */
@@ -1202,7 +1207,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
       );
     },
 
-    finalizeIncompleteReplay: (id) => {
+    finalizeIncompleteReplay: (id, knownCompleted = false) => {
       const target = id ?? get().sessionId;
       if (!target) return;
       applyToTranscript(target, (transcript) => {
@@ -1212,6 +1217,12 @@ export const useSessionStore = create<SessionState>((set, get) => {
         // Cached live turns do not have replayed=true. Never terminate them:
         // they may still be producing updates while the user changes pages.
         if (!active?.replayed) return transcript;
+        const hasUnfinishedTool = active.parts.some(
+          (part) => part.kind === "tool_call" && part.toolCall.status === "in_progress",
+        );
+        const hasVisibleReply = active.parts.some(
+          (part) => part.kind === "text" && part.text.trim().length > 0,
+        );
         const messages = transcript.messages.map((message) => {
           if (message.id !== activeId) return message;
           const parts = message.parts.map((part) => {
@@ -1237,9 +1248,14 @@ export const useSessionStore = create<SessionState>((set, get) => {
             ...message,
             parts,
             complete: true,
-            stopReason: "cancelled",
-            cancellationCategory: "session_replay_incomplete",
-            agentResult: "上次执行在应用退出或 Runtime 中断前未留下完成事件，已结束历史恢复中的假运行状态。",
+            ...(knownCompleted ? { stopReason: "end_turn" } : {}),
+            ...(!knownCompleted && (!hasVisibleReply || hasUnfinishedTool)
+              ? {
+                  stopReason: "cancelled",
+                  cancellationCategory: "session_replay_incomplete",
+                  agentResult: "上次执行在应用退出或 Runtime 中断前未留下完成事件，已结束历史恢复中的假运行状态。",
+                }
+              : {}),
           };
         });
         return {
@@ -1442,6 +1458,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
             // ACP omits `kind` when it's "other" and `status` when it's
             // "pending" (the defaults). Provide sensible fallbacks.
             const status = (raw.status as string) || "in_progress";
+            const officeReceipt = officeReceiptFromRawOutput(raw.rawOutput ?? raw.raw_output);
             const view: ToolCallView = {
               toolCallId:
                 boundedString(raw.toolCallId ?? raw.tool_call_id, 4_096),
@@ -1450,8 +1467,12 @@ export const useSessionStore = create<SessionState>((set, get) => {
               status: status === "completed" || status === "failed"
                 ? status
                 : "in_progress",
-              content: normalizeToolCallContent(raw.content),
+              content: [
+                ...normalizeToolCallContent(raw.content),
+                ...(officeReceipt ? [{ type: "text" as const, text: JSON.stringify(officeReceipt) }] : []),
+              ],
               rawInput: boundedRawInput(raw.rawInput ?? raw.raw_input),
+              officeReceipt: officeReceipt ?? undefined,
             };
             messages[idx] = upsertToolCall(messages[idx], view, streamId);
             return {
@@ -1484,6 +1505,14 @@ export const useSessionStore = create<SessionState>((set, get) => {
               deltaFields.content = normalizeToolCallContent(
                 deltaFields.content
               );
+            }
+            const officeReceipt = officeReceiptFromRawOutput(raw.rawOutput ?? raw.raw_output);
+            if (officeReceipt) {
+              deltaFields.officeReceipt = officeReceipt;
+              deltaFields.content = [
+                ...((deltaFields.content as ToolCallContent[] | undefined) ?? []),
+                { type: "text", text: JSON.stringify(officeReceipt) },
+              ];
             }
             // Patch the matching tool card across the transcript (not only the
             // streaming message — a late update may target an older turn).

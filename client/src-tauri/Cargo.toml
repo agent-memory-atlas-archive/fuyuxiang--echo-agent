@@ -1,6 +1,6 @@
 [package]
 name = "echoagent"
-version = "0.3.10"
+version = "0.3.11"
 description = "EchoAgent — an open-source desktop agent workspace built on Tauri"
 authors = ["EchoAgent"]
 edition = "2021"
@@ -39,6 +39,7 @@ hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }
 process-wrap = { version = "9.0.0", features = ["std", "tokio1"] }
+dunce = "1"
 anyhow = "1"
 uuid = { version = "1", features = ["v7"] }
 tempfile = "3"
@@ -103,6 +104,10 @@ ed25519-dalek = "2.2"
 zip = { version = "3", default-features = false, features = ["deflate"] }
 # Decode imported meeting audio locally before bounded 16 kHz WAV chunking.
 symphonia = { version = "0.5", features = ["all"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# Native input and output-loopback capture for meeting transcription.
+cpal = { path = "../vendor/cpal-loopback" }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2"

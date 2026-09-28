@@ -28,12 +28,87 @@ try {
   const errors = [];
   let layouts = 0;
   page.on("pageerror", error => errors.push(error.message));
-  const surfaces = ["memory", "security", "cloud-storage", "notify-channels", "capabilities", "coding"];
+  const surfaces = ["memory", "security", "cloud-storage", "notify-channels", "capabilities", "coding", "organization", "conversation", "meeting"];
   for (const [width, height, theme] of [[1440, 900, "light"], [1024, 768, "dark"], [768, 720, "light"]]) {
     await page.setViewportSize({ width, height });
     for (const surface of surfaces) {
       await page.goto(`http://127.0.0.1:1439/__ui-review?surface=${surface}&theme=${theme}`);
       await page.addStyleTag({ content: "*,*::before,*::after{animation:none!important;transition:none!important}" });
+      if (surface === "conversation") {
+        await page.getByRole("button", { name: "历史提问" }).click();
+        const dialog = page.getByRole("dialog", { name: "历史提问" });
+        await dialog.getByRole("searchbox", { name: "筛选历史提问" }).waitFor();
+        const box = await dialog.boundingBox();
+        const toolbar = await page.locator(".chatview__utility-bar").boundingBox();
+        assert.ok(box && toolbar && box.x >= 0 && box.x + box.width <= width && box.y >= toolbar.y + toolbar.height && box.y + box.height <= height, "question navigator clips or overlaps toolbar");
+        assert.equal(await dialog.locator(".question-history__item").count(), 7);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "conversation: horizontal page overflow");
+        await page.screenshot({ path: join(output, `${surface}-questions-${width}-${theme}.png`) });
+        layouts += 1;
+        await dialog.getByRole("searchbox", { name: "筛选历史提问" }).fill("蓝牙遥控器");
+        assert.equal(await dialog.locator(".question-history__item").count(), 1);
+        await dialog.locator(".question-history__item").click();
+        await page.locator(".msg-wrap--jump-target", { hasText: "检查蓝牙遥控器" }).waitFor();
+        assert.equal(await dialog.count(), 0);
+        await page.getByRole("button", { name: "回到最新消息并恢复自动跟随" }).click();
+        continue;
+      }
+      if (surface === "meeting") {
+        await page.getByRole("button", { name: /两者都录/ }).waitFor();
+        await page.getByRole("button", { name: /两者都录/ }).click();
+        assert.equal(await page.getByRole("button", { name: /两者都录/ }).getAttribute("aria-pressed"), "true");
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "meeting: horizontal page overflow");
+        const cards = await page.locator(".meeting-source__option").evaluateAll(elements => elements.map(element => {
+          const box = element.getBoundingClientRect();
+          return { left: box.left, right: box.right, width: box.width };
+        }));
+        assert.equal(cards.length, 3);
+        assert.ok(cards.every(card => card.left >= 0 && card.right <= width && card.width >= 120), "meeting: source choices clip");
+        await page.screenshot({ path: join(output, `${surface}-${width}-${theme}.png`) });
+        layouts += 1;
+        continue;
+      }
+      if (surface === "organization") {
+        await page.locator(".org-memory__nav button", { hasText: "文档" }).click();
+        await page.getByRole("heading", { name: /共享文档/ }).waitFor();
+        const geometry = await page.evaluate(() => {
+          const rect = (selector) => {
+            const box = document.querySelector(selector).getBoundingClientRect();
+            return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
+          };
+          return {
+            title: rect(".org-memory__page-header > div:first-child"),
+            actions: rect(".org-document-library__upload-actions"),
+            sectionTitle: rect(".org-document-library__heading h2"),
+            filter: rect(".org-document-library__filter"),
+          };
+        });
+        assert.ok(geometry.title.right <= geometry.actions.left + 1 || geometry.title.bottom <= geometry.actions.top + 1, "document upload actions overlap heading");
+        assert.ok(geometry.sectionTitle.right <= geometry.filter.left + 1 || geometry.sectionTitle.bottom <= geometry.filter.top + 1, "document scope filter overlaps section title");
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "organization: horizontal page overflow");
+        await page.screenshot({ path: join(output, `${surface}-${width}-${theme}.png`) });
+        layouts += 1;
+        await page.getByRole("button", { name: "上传文档" }).click();
+        const uploadDialog = page.getByRole("dialog", { name: "选择上传位置" });
+        const uploadBox = await uploadDialog.locator(".org-document-modal__confirm").boundingBox();
+        assert.ok(uploadBox && uploadBox.x >= 0 && uploadBox.y >= 0 && uploadBox.x + uploadBox.width <= width && uploadBox.y + uploadBox.height <= height, "document upload dialog clips at viewport edge");
+        await uploadDialog.getByRole("combobox", { name: "文档上传范围" }).waitFor();
+        await page.screenshot({ path: join(output, `${surface}-upload-${width}-${theme}.png`) });
+        layouts += 1;
+        await uploadDialog.getByRole("button", { name: "取消" }).click();
+        await page.locator(".org-memory__nav button", { hasText: "Skills" }).click();
+        await page.getByText("暂无已发布的 Skill").waitFor();
+        const skillsGeometry = await page.evaluate(() => {
+          const summary = document.querySelector(".org-skill-library__summary").getBoundingClientRect();
+          const actions = document.querySelector(".org-skill-library__actions").getBoundingClientRect();
+          return { summary: { right: summary.right, bottom: summary.bottom }, actions: { left: actions.left, top: actions.top } };
+        });
+        assert.ok(skillsGeometry.summary.right <= skillsGeometry.actions.left + 1 || skillsGeometry.summary.bottom <= skillsGeometry.actions.top + 1, "organization Skills toolbar overlaps");
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "organization Skills: horizontal page overflow");
+        await page.screenshot({ path: join(output, `${surface}-skills-${width}-${theme}.png`) });
+        layouts += 1;
+        continue;
+      }
       if (surface === "capabilities") await page.getByRole("heading", { name: "我的专家" }).waitFor();
       else if (surface === "coding") await page.getByRole("button", { name: "切换项目" }).waitFor();
       else await page.getByRole("dialog", { name: "设置" }).waitFor();
@@ -49,8 +124,8 @@ try {
         assert.ok(Math.max(...fields) - Math.min(...fields) < 1, "permission controls have inconsistent heights");
       }
       if (surface === "capabilities") {
-        assert.equal(await page.getByRole("navigation", { name: "能力管理" }).count(), 1);
-        assert.equal(await page.getByRole("tablist", { name: "专家·技能·连接器" }).count(), 0);
+        assert.equal(await page.getByRole("navigation", { name: "扩展管理" }).count(), 1);
+        assert.equal(await page.getByRole("tablist", { name: "扩展分类" }).count(), 0);
         const template = await page.getByText("推荐模板", { exact: true }).boundingBox();
         assert.ok(template && template.y < height - 100, "templates pushed below first screen");
         assert.equal(await page.locator(".colleagues-panel-shell").evaluate(element => getComputedStyle(element).overflowY), "visible");
@@ -72,6 +147,13 @@ try {
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("http://127.0.0.1:1439/__ui-review?surface=organization");
+  await page.locator(".org-memory__nav button", { hasText: "文档" }).click();
+  await page.locator(".org-document-library__row", { hasText: "指标体系模型设计模板.xlsx" }).getByRole("button", { name: "查看" }).click();
+  await page.getByText("指标=活跃用户", { exact: false }).waitFor();
+  assert.equal(await page.getByText(/预览需要文档解析器/).count(), 0);
+  await page.screenshot({ path: join(output, "organization-xlsx-preview.png") });
+
   await page.goto("http://127.0.0.1:1439/__ui-review?surface=memory");
   await page.getByRole("combobox", { name: "记忆检索方式" }).selectOption("configured");
   await page.getByText("记忆配置已保存，重启 Agent 后对新会话生效。").waitFor();
@@ -99,10 +181,47 @@ try {
   await page.getByRole("dialog", { name: "创建专家" }).getByRole("button", { name: "创建", exact: true }).click();
   await page.getByRole("button", { name: "查看专家 评审专家 详情" }).waitFor();
   for (const label of ["技能", "连接器", "插件", "浏览市场", "专家"]) {
-    await page.getByRole("navigation", { name: "能力管理" }).getByRole("button", { name: label, exact: true }).click();
+    await page.getByRole("navigation", { name: "扩展管理" }).getByRole("button", { name: label, exact: true }).click();
     await page.waitForFunction(() => !document.querySelector(".placeholder-page[role='status']"));
+    if (label === "浏览市场") {
+      await page.getByText("示例插件 324").waitFor();
+      await page.locator(".marketplace-source__plugins .mp-plugin").first().hover();
+      await page.mouse.wheel(0, 600);
+      await page.waitForFunction(() => document.querySelector(".marketplace-panel")?.scrollTop > 0);
+      const scroll = await page.locator(".marketplace-panel").evaluate(async panel => {
+        const last = panel.querySelector(".mp-plugin:last-child");
+        const scrollRange = panel.scrollHeight - panel.clientHeight;
+        panel.scrollTop = scrollRange;
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        const panelRect = panel.getBoundingClientRect();
+        const lastRect = last.getBoundingClientRect();
+        return { scrollRange, scrollTop: panel.scrollTop, lastTop: lastRect.top, lastBottom: lastRect.bottom, panelTop: panelRect.top, panelBottom: panelRect.bottom };
+      });
+      assert.ok(scroll.scrollRange > 0 && scroll.scrollTop > 0, "plugin marketplace has no vertical scroll range");
+      assert.ok(scroll.lastTop >= scroll.panelTop && scroll.lastBottom <= scroll.panelBottom + 1, "last marketplace plugin remains clipped after scrolling");
+    }
   }
   await page.getByRole("heading", { name: "我的专家" }).waitFor();
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("http://127.0.0.1:1439/__ui-review?surface=expert-entry");
+  await page.addStyleTag({ content: "*,*::before,*::after{animation:none!important;transition:none!important}" });
+  await page.locator(".secondary-sidebar__trigger").hover();
+  await page.getByText("还没有可选专家").waitFor();
+  const createEntry = await page.getByRole("button", { name: "创建专家" }).boundingBox();
+  assert.ok(createEntry && createEntry.x >= 0 && createEntry.x + createEntry.width <= 1440, "expert creation entry clips viewport");
+  await page.screenshot({ path: join(output, "expert-entry-empty-1440.png") });
+  await page.getByRole("button", { name: "创建专家" }).click();
+  const createDialog = page.getByRole("dialog", { name: "创建专家" });
+  await createDialog.waitFor();
+  assert.equal(await page.getByRole("navigation", { name: "扩展管理" }).count(), 1);
+  await createDialog.getByRole("textbox", { name: "专家名称" }).fill("入口验证专家");
+  await createDialog.getByRole("textbox", { name: "专家 System Prompt" }).fill("帮助验证专家创建入口。");
+  await createDialog.getByRole("button", { name: "创建", exact: true }).click();
+  await page.getByRole("button", { name: "查看专家 入口验证专家 详情" }).waitFor();
+  await page.getByRole("button", { name: "返回对话" }).click();
+  await page.locator(".secondary-sidebar__trigger").hover();
+  await page.locator(".secondary-sidebar__item-btn", { hasText: "入口验证专家" }).waitFor();
 
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto("http://127.0.0.1:1439/__ui-review?surface=memory");
@@ -121,7 +240,7 @@ try {
   await page.keyboard.press("Escape");
   assert.equal(await page.getByRole("menu", { name: "项目列表" }).count(), 0);
   assert.deepEqual(errors, [], "browser runtime errors");
-  console.log(JSON.stringify({ passed: true, screenshots: output, layouts, interactions: ["memory", "notification", "storage", "expert creation", "capability navigation", "font scaling", "project keyboard navigation"] }, null, 2));
+  console.log(JSON.stringify({ passed: true, screenshots: output, layouts, interactions: ["meeting source selection", "organization document preview", "conversation question navigation", "memory", "notification", "storage", "expert creation", "expert entry and refresh", "extension navigation", "font scaling", "project keyboard navigation"] }, null, 2));
 } finally {
   await browser?.close();
   await server.close();

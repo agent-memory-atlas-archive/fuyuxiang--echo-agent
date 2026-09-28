@@ -86,7 +86,7 @@ const PROVIDER_PRESETS: Record<ProviderKind, ProviderPreset> = {
     placeholderKey: "sk-ant-...",
   },
   minimax: {
-    label: "MiniMax 官方接口（支持录音转写）",
+    label: "MiniMax 官方接口",
     shortLabel: "MiniMax",
     baseUrl: "https://api.minimax.cn/v1",
     apiBackend: "chat_completions",
@@ -506,11 +506,9 @@ export function ModelConnectionsPanel({ onModelsChanged }: ModelConnectionsPanel
                 <div><dt>Base URL</dt><dd title={selectedProvider.baseUrl}>{selectedProvider.baseUrl || "—"}{selectedProvider.managed && <span> · 只读</span>}</dd></div>
                 <div><dt>上下文窗口</dt><dd>{selectedProvider.contextWindow ? `${selectedProvider.contextWindow.toLocaleString()} tokens` : selectedModels.some((model) => model.contextWindow) ? "按模型配置" : "使用模型默认值"}</dd></div>
               </dl>
-              {selectedProvider.baseUrl?.startsWith("http://") && (
+              {selectedProvider.source !== "organization" && selectedProvider.source !== "builtin" && selectedProvider.baseUrl?.startsWith("http://") && (
                 <div className="model-connections__message model-connections__message--warn">
-                  {selectedProvider.source === "builtin"
-                    ? "此连接使用 HTTP 明文传输；提问和模型回复可能被网络路径上的其他人看到。"
-                    : "此连接使用 HTTP 明文传输；API Key、提问和模型回复可能被网络路径上的其他人看到。"}
+                  此连接使用 HTTP 明文传输；API Key、提问和模型回复可能被网络路径上的其他人看到。
                 </div>
               )}
               {savedDefaultMissing && (
@@ -886,8 +884,10 @@ function ConnectionEditor({
                 {draft.providerKind === "openai"
                   ? "使用 OpenAI Platform API Key；ChatGPT 订阅登录不能作为模型 API 凭据。"
                   : draft.providerKind === "minimax"
-                    ? "同一 MiniMax API Key 用于对话、录音转写与会议纪要；语音额度需在 MiniMax 开放平台单独开通。"
-                  : "保存在本机私有配置中；编辑时无需重复输入。"}
+                    ? "录音转写页会检测此接口和 API Key 是否具备语音能力；语音额度可能需要单独开通。"
+                  : draft.providerKind === "custom"
+                    ? "保存在本机私有配置中；MiniMax 模型可在录音转写页检测 /speech_to_text 能力。"
+                    : "保存在本机私有配置中；编辑时无需重复输入。"}
               </span>
             </div>
           </section>

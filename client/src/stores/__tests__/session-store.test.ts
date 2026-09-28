@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useSessionStore } from "../session-store";
+import { collectSessionArtifacts } from "@/lib/session-artifacts";
 
 /**
  * Per-session transcript store. The whole point of this refactor is that
@@ -76,6 +77,37 @@ const userMessageTextForTest = (m: ReturnType<typeof useSessionStore.getState>["
 
 describe("session-store transcripts", () => {
   beforeEach(resetStore);
+
+  it("把 Runtime 的 Office MCP rawOutput 转成可打开的任务成果", () => {
+    const store = useSessionStore.getState();
+    store.setSession("A");
+    store.applyUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "office-1",
+      title: "echoagent-office__office_create",
+      kind: "mcp_tool",
+      status: "in_progress",
+      content: [],
+      __sessionId: "A",
+    } as never);
+    store.applyUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "office-1",
+      status: "completed",
+      rawOutput: {
+        type: "MCP",
+        server_name: "echoagent-office",
+        tool_name: "echoagent-office__office_create",
+        output: { OkayOutput: JSON.stringify({
+          path: "/work/EchoAgent成果/report.pdf", format: "pdf",
+          byteSize: 4096, sha256: "a".repeat(64),
+        }) },
+      },
+      __sessionId: "A",
+    } as never);
+    expect(collectSessionArtifacts(useSessionStore.getState().messages).map((artifact) => artifact.path))
+      .toEqual(["/work/EchoAgent成果/report.pdf"]);
+  });
 
   it("暂停建立会话屏障，切换任务后仍保留且迟到增量不能复活", () => {
     const store = useSessionStore.getState();
@@ -857,6 +889,79 @@ describe("session-store transcripts", () => {
       kind: "tool_call",
       toolCall: { status: "failed" },
     });
+  });
+
+  it("已完成会话的历史回放缺少结束事件时不再显示生成中或误报取消", () => {
+    const s = useSessionStore.getState();
+    s.setSession("A");
+    s.applyUpdate({
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "思考过程" },
+      _meta: { isReplay: true },
+      __sessionId: "A",
+    } as never);
+    s.applyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "你好！我是 Echo。" },
+      _meta: { isReplay: true },
+      __sessionId: "A",
+    } as never);
+
+    expect(useSessionStore.getState().streaming).toBe(true);
+    s.finalizeIncompleteReplay("A", true);
+
+    const state = useSessionStore.getState();
+    const assistant = state.messages[state.messages.length - 1];
+    expect(state.streaming).toBe(false);
+    expect(state.streamingMessageId).toBeNull();
+    expect(assistant).toMatchObject({ complete: true, stopReason: "end_turn" });
+    expect(assistant.cancellationCategory).toBeUndefined();
+    expect(assistant.agentResult).toBeUndefined();
+    expect(assistant.parts.some((part) => part.kind === "text" && part.text === "你好！我是 Echo。"))
+      .toBe(true);
+  });
+
+  it("重放的 turn_completed 直接结束历史回复的生成态", () => {
+    const s = useSessionStore.getState();
+    s.setSession("A");
+    s.applyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "你好！我是 Echo。" },
+      _meta: { isReplay: true },
+      __sessionId: "A",
+    } as never);
+    s.applyUpdate({
+      sessionUpdate: "turn_completed",
+      prompt_id: "prompt-1",
+      stop_reason: "end_turn",
+      _meta: { isReplay: true },
+      __sessionId: "A",
+    } as never);
+
+    const state = useSessionStore.getState();
+    expect(state.streaming).toBe(false);
+    expect(state.messages[state.messages.length - 1]).toMatchObject({
+      complete: true,
+      stopReason: "end_turn",
+    });
+  });
+
+  it("旧会话只有回复正文而没有完成状态时静默结束历史生成态", () => {
+    const s = useSessionStore.getState();
+    s.setSession("A");
+    s.applyUpdate({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "已有回复" },
+      _meta: { isReplay: true },
+      __sessionId: "A",
+    } as never);
+
+    s.finalizeIncompleteReplay("A");
+
+    const state = useSessionStore.getState();
+    expect(state.streaming).toBe(false);
+    expect(state.messages[state.messages.length - 1]).toMatchObject({ complete: true });
+    expect(state.messages[state.messages.length - 1].stopReason).toBeUndefined();
   });
 
   it("历史收尾不会误停缓存中的真实后台运行", () => {

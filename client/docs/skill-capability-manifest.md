@@ -1,49 +1,27 @@
-# Skill executable capability contract
+# Skill 可执行能力声明
 
-EchoAgent continues to support portable `SKILL.md` prompt packages. A package
-can additionally include `echo.skill.json` when it provides deterministic code,
-depends on host commands or authenticated connectors, or produces files that
-must be verified before the Agent reports success.
+普通 `SKILL.md` 仍可只提供说明和工作流。需要执行脚本、依赖本机命令或已连接的服务、或产出可检查文件的 Skill，可以在同一目录附加 `echo.skill.json`。该文件是声明和预检依据，**不会授予新权限**；脚本仍通过普通工具执行，受当前工作区、沙箱和用户审批约束。连接器凭据留在连接器中，不交给 Skill 脚本。
 
-The manifest is deliberately declarative. It never grants permission and never
-executes code itself. Skill entrypoints are run with the normal Bash tool, so
-the active workspace sandbox and user approval policy remain authoritative.
-Connector credentials remain inside the connector implementation and are never
-copied into a Skill package, prompt, or script environment.
-
-## Schema version 1
+## 示例（schemaVersion 1）
 
 ```json
 {
   "schemaVersion": 1,
-  "capabilities": [
-    "document.docx.create",
-    "document.docx.edit"
-  ],
+  "capabilities": ["document.docx.create"],
   "runtime": {
     "kind": "python",
     "command": "python3",
-    "entrypoints": {
-      "create": "scripts/create.py",
-      "edit": "scripts/edit.py"
-    },
+    "entrypoints": { "create": "scripts/create.py" },
     "timeoutSeconds": 120
   },
   "requirements": {
     "commands": ["libreoffice"],
-    "connectors": [
-      {
-        "id": "microsoft-365",
-        "label": "Microsoft 365",
-        "accountRequired": true,
-        "purpose": "Read a source document from OneDrive"
-      }
-    ],
+    "connectors": [],
     "osPermissions": []
   },
   "permissions": {
     "filesystem": "workspace-write",
-    "network": ["https://graph.microsoft.com"],
+    "network": [],
     "externalActions": []
   },
   "artifacts": [
@@ -58,44 +36,17 @@ copied into a Skill package, prompt, or script environment.
 }
 ```
 
-`runtime.kind` accepts `python`, `node`, or `shell`. `command` is optional and
-defaults to `python3`, `node`, or the platform shell. It must be a command name,
-not an absolute path. Every entrypoint must be a regular file inside the package.
+这是第三方 Skill 的示例，`libreoffice` 只属于该示例的依赖；内置办公文档生成不需要安装它。
 
-`requirements.commands` lists additional host commands. Connector IDs must
-match an EchoAgent MCP connector name. Set `accountRequired` when the connector
-needs OAuth, an API token, or another account credential. This lets the product
-distinguish “connector missing” from “account not connected” without exposing a
-secret to the model.
+`runtime.kind` 可选 `python`、`node`、`shell`；`command` 可省略，默认分别是 `python3`、`node` 和系统 Shell。入口文件必须是包内普通文件，命令只能写名称，不能写绝对路径。`requirements.connectors` 可声明连接器 ID、显示名称、是否需要账号及用途；已配置连接器的密钥不会写入清单或提示词。
 
-`permissions.filesystem` accepts `none`, `workspace-read`, or
-`workspace-write`. These are requested capabilities for preflight and review,
-not grants; the active sandbox may be stricter. Network entries are exact HTTPS origins; paths, wildcards,
-embedded credentials, query strings, and fragments are rejected. Consequential
-effects such as `email.send` or `notion.page.publish` belong in
-`externalActions` and still require the normal tool approval flow.
+`permissions.filesystem` 可选 `none`、`workspace-read`、`workspace-write`。`network` 只接受 HTTPS origin，或本机 loopback HTTP origin；不能包含路径、查询、凭据或通配符。`externalActions` 用于声明发邮件、发布页面等外部副作用，执行时仍要经过正常审批。`artifacts` 的路径必须相对工作区，不能向上遍历；运行契约要求 Agent 在报告成功前核对必需产物，清单本身不自动执行产物校验。
 
-Artifact patterns are workspace-relative and may contain glob characters, but
-cannot be absolute or traverse a parent directory. A required artifact must
-exist, be non-empty, and satisfy its declared MIME/size constraints before the
-Agent can claim successful completion.
+## 安装与运行状态
 
-## Installation and readiness behavior
+- 没有 `echo.skill.json`：按提示词/工作流 Skill 使用。
+- 清单无效：受管安装或直接路径注册会拒绝。
+- 缺少命令或连接器：显示「缺少运行依赖」；连接器尚需账号配置或授权：显示「尚未完成配置」。
+- 自动化任务只接受提示词 Skill 或预检就绪的可执行 Skill。声明的工作区写入、网络和外部操作会进入安装风险报告。
 
-- Packages without `echo.skill.json` remain compatible and are labeled
-  “prompt/workflow only”.
-- Invalid manifests block managed installation and direct path registration.
-- Missing commands do not block installation; the Skill is labeled “missing
-  dependencies” until the host is ready.
-- Missing connectors are also labeled “missing dependencies”; installed
-  connectors that still need setup, account authorization, or re-enabling are
-  labeled “configuration required”.
-- Connector/account and operating-system permission requirements are shown
-  before installation. Installation never requests or stores those credentials.
-- Declared workspace writes, network access, and external side effects are
-  included in the installation risk report.
-- On invocation, the validated contract is appended to the Skill instructions,
-  including entrypoints, security boundaries, and artifact acceptance rules.
-  Dynamic fields are JSON encoded and the complete rendered contract is limited
-  to 4 KiB. Manifests that cannot fit that prompt budget are rejected during
-  inspection rather than truncated at execution time.
+清单最大 256 KiB；注入运行上下文的契约最大 4 KiB，超出时预检拒绝。具体字段和校验逻辑以 [`capability.rs`](../vendor/echo-agent-build/crates/codegen/echo-agent-tools/src/implementations/skills/capability.rs)、[`validate.rs`](../vendor/echo-agent-build/crates/codegen/echo-agent-tools/src/implementations/skills/capability/validate.rs) 及桌面端 [`skill_installer.rs`](../src-tauri/src/skill_installer.rs) 为准。

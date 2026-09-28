@@ -53,6 +53,20 @@
 
 ## 快速开始
 
+### 下载与安装（普通用户）
+
+普通用户从 [Echo Agent 网站](http://www.ojlab.com/) 进入桌面客户端下载入口，按系统和处理器架构选择安装包。**截至 2026-09-28，网站仍显示 0.3.10 下载按钮，但对应文件尚未上传，点击会返回 404；0.3.11 安装包也尚未提供**。目前需等待站点上传，或向维护者获取安装包。仓库的 [GitHub Releases](https://github.com/fuyuxiang/echo-agent-desktop/releases) 此时也没有公开安装包。应用内更新服务只供已安装客户端使用，不能代替首次安装包。
+
+| 系统 | 选择的安装包 | 安装方式 |
+| --- | --- | --- |
+| Windows x86_64 | Windows 桌面安装程序（`.exe`） | 运行安装程序，按提示完成安装 |
+| macOS Apple Silicon | macOS Apple Silicon 磁盘映像（`.dmg`） | 打开 DMG，将 EchoAgent 拖入「应用程序」 |
+| macOS Intel | macOS Intel 磁盘映像（`.dmg`） | 打开 DMG，将 EchoAgent 拖入「应用程序」 |
+
+选择与你的机器架构相符、由项目维护者提供的已签名安装包。当前仓库源码版本为 `0.3.11`；版本号不代表该版本的安装包已经上传。首次启动后可直接选择内置模型，或按下方步骤连接自己的模型。
+
+### 从源码运行（开发者）
+
 仓库已包含内嵌 Agent Runtime 及其锁定依赖的源码快照，正常克隆即可构建，无需初始化 Git Submodule。
 
 <details>
@@ -60,7 +74,7 @@
 
 | 依赖 | 要求 |
 | --- | --- |
-| Node.js | 22 或 24+；Theia 源码构建和桌面 IDE 服务需要该版本 |
+| Node.js | 22 或 24；Theia 源码构建和桌面 IDE 服务只验证了这两个主版本 |
 | pnpm | 10；仓库已固定期望版本 |
 | Rust | Stable，最低 `1.92.0`，包含 `rustfmt` 与 `clippy` |
 | Protocol Buffers | 系统 `PATH` 中可用的原生 `protoc`，或设置 `PROTOC` |
@@ -92,12 +106,11 @@ pnpm install --frozen-lockfile
 
 首次构建会编译完整的 Rust Runtime，因此会比后续增量构建耗时更长。
 
-### 连接你的模型
+### 选择或连接模型
 
-1. 启动 EchoAgent，打开「设置 → 模型」。
-2. 选择 Provider 并填写自己的 API Key；自定义服务还需配置 Endpoint 与协议。
-3. 添加至少一个模型，可先测试连接。
-4. 返回首页，选择工作目录、模型和权限模式，然后发送第一个任务。
+1. 启动 EchoAgent，可直接使用内置 `chat-xc` 模型；它不要求填写 API Key，但会连接项目配置的远端模型服务。
+2. 如果使用自己的模型，打开「设置 → 模型」，选择 Provider，填写 API Key；自定义服务还需配置 Endpoint 与协议，然后添加模型并测试连接。
+3. 返回首页，选择工作目录、模型和权限模式，然后发送第一个任务。
 
 <details>
 <summary><strong>使用 TOML 手动配置</strong></summary>
@@ -133,12 +146,16 @@ name = "My Model"
 | **代码开发工作台** | 内嵌 Eclipse Theia IDE（文件资源管理器、编辑器、搜索、终端、Git、预览和扩展），旁边保留 EchoAgent 的任务、对话、变更审阅、验证与交付 |
 | **浏览器与电脑操作** | 任务隔离的 Browser Use、基于屏幕快照的 Computer Use、实时能力检测、暂停/接管/恢复、逐项高风险确认与任务级数据清理 |
 | **工作空间** | 目录级会话、全文检索、文件树与安全文件操作、常见文档预览、变更跟踪、Unified Diff 与交付资产 |
+| **办公文档** | 在任务中读取并整理本地 Office/PDF；[离线生成 Word、PDF、Excel、PPT](docs/office-documents.md)，支持回复导出与会议纪要导出，无需额外办公服务账号 |
+| **录音转写** | 选择麦克风、系统声音或两者混合录音，本地保存后通过已配置的 MiniMax 语音接口转写并生成会议纪要；支持暂停、导入、校对和导出 |
 | **模型接入** | OpenAI、Anthropic、DeepSeek、通义千问预设，多 Provider、多模型，以及 OpenAI/Anthropic 兼容 Endpoint |
 | **能力扩展** | MCP stdio/Streamable HTTP/SSE、MCP OAuth、Skills（含 [可执行能力契约](docs/skill-capability-manifest.md)）、Plugins、CLI 连接器、可复用专家与本地能力市场 |
 | **长期上下文** | 项目指令、任务与计划、个人记忆、会话摘要、本地 Markdown/文本/Office 文件的混合检索索引，以及可选组织知识服务 |
 | **定时任务与通知** | 单次或按小时/日/周/月/年周期调度、运行记录、任务级模型与权限、桌面通知、Slack、Discord 与 Webhook |
 | **项目与云存储** | 持久化项目元数据和资产、任务产物归档、本地文件浏览，以及 WebDAV 存储源的浏览、上下传和远程文件管理 |
 | **内容体验** | 文件与图片附件、拖拽、语音输入、GFM、语法高亮、KaTeX、Mermaid 和工具结果预览 |
+
+系统声音录制支持 Windows 和 macOS 14.6 及以上版本。macOS 首次使用时需在系统的隐私设置中允许系统音频录制；混合录音建议佩戴耳机，避免扬声器声音被麦克风重复收录。
 
 ## 执行界面
 
@@ -202,7 +219,7 @@ vendor/echo-agent-build/   内嵌 Agent Runtime 的锁定源码快照
 vendor/async-openai/       OpenAI 兼容 Rust 客户端源码快照
 vendor/nucleo/             模糊匹配库源码快照
 scripts/                   初始化、验证、构建与发布脚本
-docs/                      平台构建与桌面更新文档
+docs/                      办公文档、Skill、自动化与 Theia 集成说明
 ```
 
 ## 数据与安全边界
@@ -249,7 +266,7 @@ EchoAgent 默认将应用状态保存在 `~/.echo-agent/`；启动前设置 `ECH
 | 命令 | 用途 |
 | --- | --- |
 | `pnpm tauri dev` | 运行完整桌面应用 |
-| `pnpm ide:build` | 从仓库内源码编译 Theia IDE；需要 Node.js 22 或 24+ |
+| `pnpm ide:build` | 从仓库内源码编译 Theia IDE；需要 Node.js 22 或 24 |
 | `pnpm ide:stage` | 将 Theia 和当前平台 Node.js 运行时放入 Tauri 资源目录 |
 | `pnpm ide:prepare` | 首次构建并暂存 IDE；`pnpm tauri dev/build` 会自动调用 |
 | `pnpm dev` | 仅启动 Vite 前端；原生能力需要 Tauri 容器 |
