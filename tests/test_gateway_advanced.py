@@ -438,3 +438,38 @@ class TestGatewayAuthPairingLockout:
         for _ in range(4):
             auth.verify_pairing("telegram", "user1", "WRONGCODE2")
         assert auth._is_locked_out("telegram") is False
+
+    def test_failure_table_is_bounded_under_distinct_user_ids(self, tmp_path: Path):
+        # /pair/verify is unauthenticated and the lockout key is derived from
+        # caller-supplied platform/user_id, so one entry per request used to be
+        # added forever (remote pre-auth memory exhaustion).
+        from echo_agent.config.schema import GatewayAuthConfig
+        from echo_agent.gateway.auth import GatewayAuth
+
+        auth = GatewayAuth(
+            GatewayAuthConfig(mode="pairing", pairing_ttl_seconds=60),
+            tmp_path,
+            max_tracked_failures=25,
+        )
+        for i in range(200):
+            auth.verify_pairing("telegram", f"attacker-{i}", "WRONGCODE1")
+        assert len(auth._verify_failures) <= 25
+
+    def test_stale_failure_entries_are_reclaimed(self, tmp_path: Path, monkeypatch):
+        from echo_agent.config.schema import GatewayAuthConfig
+        from echo_agent.gateway.auth import GatewayAuth
+
+        now = 1_000.0
+        monkeypatch.setattr("echo_agent.gateway.auth.time.time", lambda: now)
+        auth = GatewayAuth(
+            GatewayAuthConfig(mode="pairing", pairing_ttl_seconds=60),
+            tmp_path,
+            max_tracked_failures=10,
+        )
+        for i in range(10):
+            auth.verify_pairing("telegram", f"user-{i}", "WRONGCODE1")
+        assert len(auth._verify_failures) == 10
+
+        now += 301.0  # past the 300 s lockout window
+        auth.verify_pairing("telegram", "fresh", "WRONGCODE1")
+        assert len(auth._verify_failures) == 1
