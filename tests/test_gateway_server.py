@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -50,6 +51,61 @@ class _JsonRequest:
 
     async def json(self) -> dict:
         return self._body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        [],
+        {"platform": "telegram", "user_id": ["user1"], "code": "WRONGCODE1"},
+        {"platform": "telegram", "user_id": "user1", "code": ["WRONGCODE1"]},
+        {"platform": "x" * 129, "user_id": "user1", "code": "WRONGCODE1"},
+        {"platform": "telegram", "user_id": "x" * 65_536, "code": "WRONGCODE1"},
+        {"platform": "telegram", "user_id": "user1", "code": "x" * 65},
+    ],
+)
+async def test_pair_verify_rejects_invalid_identity_without_tracking(body) -> None:
+    gw, _ = _make_gateway()
+
+    response = await gw._handle_pair_verify(_JsonRequest(body))
+
+    assert response.status == 400
+    assert len(gw.auth._verify_failures) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [[], {"platform": 123}, {"platform": "x" * 129}])
+async def test_pair_generate_rejects_invalid_platform(body) -> None:
+    gw, _ = _make_gateway()
+
+    response = await gw._handle_pair_generate(_JsonRequest(body))
+
+    assert response.status == 400
+    assert len(gw.auth._pending_codes) == 0
+
+
+@pytest.mark.asyncio
+async def test_pair_verify_returns_retry_after_when_locked() -> None:
+    gw, _ = _make_gateway()
+    request = _JsonRequest({
+        "platform": "telegram",
+        "user_id": "user1",
+        "code": "WRONGCODE1",
+    })
+
+    for _ in range(4):
+        response = await gw._handle_pair_verify(request)
+        assert response.status == 403
+
+    response = await gw._handle_pair_verify(request)
+    assert response.status == 429
+    assert response.headers["Retry-After"] == "300"
+    assert json.loads(response.text)["retry_after_seconds"] == 300
+
+    response = await gw._handle_pair_verify(request)
+    assert response.status == 429
+    assert len(gw.auth._verify_failures) == 1
 
 
 @pytest.mark.asyncio

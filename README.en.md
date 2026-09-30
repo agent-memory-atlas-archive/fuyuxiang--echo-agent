@@ -144,6 +144,8 @@ Two environment differences to note: Linux user services stop with the login ses
 
 > **Local access boundary**: with no additional configuration the loopback gateway accepts two kinds of client — `echo-agent cli`, and native clients that send no browser `Origin` (scripts, SDKs). Browser requests carrying a cross-site `Origin` are rejected, preventing a web page from driving the local agent through the user's browser (CSRF). See [gateway authentication](https://fuyuxiang.github.io/echo-agent/en/integrations/gateway/authentication/) for opening access to a browser or the playground.
 
+Pairing clients receive distinct verification responses: `400` for invalid request fields, `403` for an invalid or expired code, and `429` with a `Retry-After` wait time when an identity is temporarily locked. See [gateway authentication](https://fuyuxiang.github.io/echo-agent/en/integrations/gateway/authentication/#pairing-failure-lockout) for field limits and lockout behavior.
+
 ---
 
 ## Documentation

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import hmac
+import math
 import secrets
 import time
 from collections import OrderedDict
@@ -25,6 +26,12 @@ from echo_agent.gateway.host_rules import (
 
 
 class GatewayAuth:
+
+    # Pairing verification accepts caller-supplied values before authentication.
+    # Keep them small even though the failure table stores only a digest.
+    MAX_PAIRING_PLATFORM_LENGTH = 128
+    MAX_PAIRING_USER_ID_LENGTH = 256
+    MAX_PAIRING_CODE_LENGTH = 64
 
     # Host names that mean "this machine" when the gateway is bound to a
     # loopback address. See host_rules.LOOPBACK_HOST_NAMES for why these are
@@ -67,10 +74,9 @@ class GatewayAuth:
 
         self._approved: dict[str, set[str]] = {}
         self._pending_codes: dict[str, dict[str, Any]] = {}
-        # Insertion-ordered so the oldest lockout record is the first eviction
-        # candidate. Bounded because the key is caller-supplied and the pairing
-        # verification endpoint is reachable without a token: one request with a
-        # fresh platform/user_id used to add one permanent entry.
+        # Keep both the entry count and each key's size bounded. Raw user IDs
+        # are caller-supplied on an unauthenticated endpoint and may be large.
+        # The oldest record is evicted when the table reaches capacity.
         self._verify_failures: OrderedDict[str, list[float]] = OrderedDict()
         self._max_tracked_failures = max(1, int(max_tracked_failures))
         # Next time the O(size) stale sweep may run; see _record_verify_failure.
@@ -363,8 +369,10 @@ class GatewayAuth:
         return code
 
     def verify_pairing(self, platform: str, user_id: str, code: str) -> bool:
+        if self.pairing_input_error(platform, user_id, code) is not None:
+            return False
         code = code.upper().strip()
-        lockout_key = f"{platform}:{user_id}"
+        lockout_key = self._failure_key(platform, user_id)
 
         if self._is_locked_out(lockout_key):
             self.audit("pair_verify", platform=platform, user_id=user_id, ok=False, reason="locked_out")
@@ -398,15 +406,46 @@ class GatewayAuth:
         self.audit("pair_verify", platform=platform, user_id=user_id)
         return True
 
+    @classmethod
+    def pairing_input_error(cls, platform: Any, user_id: Any, code: Any) -> str | None:
+        """Validate the fields before storing or logging untrusted identities."""
+        fields = (
+            ("platform", platform, cls.MAX_PAIRING_PLATFORM_LENGTH),
+            ("user_id", user_id, cls.MAX_PAIRING_USER_ID_LENGTH),
+            ("code", code, cls.MAX_PAIRING_CODE_LENGTH),
+        )
+        for name, value, limit in fields:
+            if not isinstance(value, str) or not value.strip():
+                return f"{name} must be a non-empty string"
+            if len(value) > limit:
+                return f"{name} must be at most {limit} characters"
+        return None
+
+    @staticmethod
+    def _failure_key(platform: str, user_id: str) -> str:
+        # Preserve the existing platform:user identity while storing a fixed
+        # size key. A raw user ID could otherwise fill memory despite the cap.
+        return hashlib.sha256(f"{platform}:{user_id}".encode("utf-8")).hexdigest()
+
+    def pairing_retry_after(self, platform: str, user_id: str) -> int:
+        """Seconds until this identity can try again; zero if it is not locked."""
+        return self._lockout_retry_after(self._failure_key(platform, user_id))
+
     def _is_locked_out(self, lockout_key: str) -> bool:
+        return self._lockout_retry_after(lockout_key) > 0
+
+    def _lockout_retry_after(self, lockout_key: str) -> int:
         # Keyed by platform:user — keying by platform alone would let one
         # remote attacker lock out pairing for every user on the platform.
         failures = self._verify_failures.get(lockout_key, [])
         if len(failures) < self._max_failures:
-            return False
-        recent = [t for t in failures if time.time() - t < self._lockout_seconds]
+            return 0
+        now = time.time()
+        recent = [t for t in failures if now - t < self._lockout_seconds]
         self._verify_failures[lockout_key] = recent
-        return len(recent) >= self._max_failures
+        if len(recent) < self._max_failures:
+            return 0
+        return max(1, math.ceil(self._lockout_seconds - (now - recent[0])))
 
     def _record_verify_failure(self, lockout_key: str) -> None:
         now = time.time()

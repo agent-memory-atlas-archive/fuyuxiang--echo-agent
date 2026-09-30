@@ -129,18 +129,22 @@ Requests originating from `127.0.0.1` or `::1` (localhost) can bypass user ident
 
 ## Pairing Failure Lockout
 
-To prevent brute-force guessing of pairing codes, the system enforces the following lockout policy:
+`POST /api/v1/pair/verify` (the default path; `api_prefix` can change the prefix) accepts a pairing code from a client that does not yet have an API token. `platform`, `user_id`, and `code` must be non-empty strings of at most 128, 256, and 64 characters respectively. Invalid input returns `400` and is not counted as a failed attempt.
 
-- **Threshold**: 5 consecutive failed attempts
-- **Lockout duration**: 300 seconds (5 minutes)
-- **Lockout granularity**: Per source IP or user identifier
+To slow repeated guesses for the same identity, the gateway uses this lockout policy:
+
+- **Threshold**: 5 failures within a rolling 300-second window
+- **Lockout duration**: Up to 300 seconds from the first failure in that window
+- **Lockout granularity**: The request's `platform:user_id`. The client supplies `user_id`, so this is not a per-IP rate limit.
 
 ```
-Attempts 1-4  → Returns 401 Unauthorized
-Attempt 5     → Triggers lockout, returns 429 Too Many Requests
-During lockout → All pairing requests return 429 immediately without verification
-After 300s    → Auto-unlock, counter resets
+Attempts 1-4   → 403 (invalid or expired pairing code)
+Attempt 5      → 429 with a Retry-After header and retry_after_seconds field
+During lockout → 429 without checking the pairing code
+After the window → Attempts are accepted again
 ```
+
+The gateway tracks at most 10,000 identities and reclaims stale records after the lockout window. At capacity, it evicts the least recently updated identity, so an individual lockout may end early under heavy load. This bound protects memory; it does not replace network rate limiting or access controls in front of the gateway.
 
 ## Admin Users
 

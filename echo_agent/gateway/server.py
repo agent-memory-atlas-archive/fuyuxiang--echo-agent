@@ -1634,14 +1634,22 @@ class GatewayServer:
         except json.JSONDecodeError:
             return web.json_response({"error": "invalid JSON"}, status=400)
 
-        if not body.get("platform", ""):
-            return web.json_response({"error": "platform required"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "JSON object required"}, status=400)
+        reported_platform = body.get("platform")
+        if not isinstance(reported_platform, str) or not reported_platform.strip():
+            return web.json_response({"error": "platform must be a non-empty string"}, status=400)
+        if len(reported_platform) > self.auth.MAX_PAIRING_PLATFORM_LENGTH:
+            return web.json_response(
+                {"error": f"platform must be at most {self.auth.MAX_PAIRING_PLATFORM_LENGTH} characters"},
+                status=400,
+            )
         # Folded with the same rule as /message and the WS handshake. The approved
         # -users store is keyed by platform (auth.py, {platform}_approved.json), so
         # pairing under the raw name while messages arrive under the folded one
         # would file the approval where is_authorized never looks — the client
         # would pair successfully and still be rejected.
-        platform = self._normalize_platform(body.get("platform"))
+        platform = self._normalize_platform(reported_platform)
 
         code = self.auth.generate_pairing_code(platform)
         return web.json_response({"code": code, "ttl_seconds": self._config.auth.pairing_ttl_seconds})
@@ -1652,20 +1660,31 @@ class GatewayServer:
         except json.JSONDecodeError:
             return web.json_response({"error": "invalid JSON"}, status=400)
 
+        if not isinstance(body, dict):
+            return web.json_response({"error": "JSON object required"}, status=400)
+
         user_id = body.get("user_id", "")
         code = body.get("code", "")
-
-        if not all([body.get("platform", ""), user_id, code]):
-            return web.json_response({"error": "platform, user_id, code required"}, status=400)
+        reported_platform = body.get("platform", "")
+        input_error = self.auth.pairing_input_error(reported_platform, user_id, code)
+        if input_error is not None:
+            return web.json_response({"error": input_error}, status=400)
         # Same fold as pair_generate, so verify looks up the code under the key it
         # was issued with.
-        platform = self._normalize_platform(body.get("platform"))
+        platform = self._normalize_platform(reported_platform)
 
         if self.auth.verify_pairing(platform, user_id, code):
             await self.hooks.emit("auth_success", platform=platform, user_id=user_id)
             return web.json_response({"status": "paired"})
         else:
             await self.hooks.emit("auth_failed", platform=platform, user_id=user_id)
+            retry_after = self.auth.pairing_retry_after(platform, user_id)
+            if retry_after:
+                return web.json_response(
+                    {"error": "too many pairing attempts", "retry_after_seconds": retry_after},
+                    status=429,
+                    headers={"Retry-After": str(retry_after)},
+                )
             return web.json_response({"error": "invalid or expired code"}, status=403)
 
     async def _handle_meta(self, request: web.Request) -> web.Response:

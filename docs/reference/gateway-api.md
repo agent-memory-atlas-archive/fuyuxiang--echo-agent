@@ -48,6 +48,7 @@ Token Header 名称可通过 `gateway.auth.token_header` 自定义。
 - **Origin 检查**: 仅允许 `gateway.auth.allowed_origins` 中列出的来源
 - **Host 检查**: 仅允许 `gateway.auth.allowed_hosts` 中列出的 Host
 - **Pairing 码过期**: 默认 300 秒（`gateway.auth.pairing_ttl_seconds`）
+- **配对验证反馈**: `platform`、`user_id`、`code` 类型或长度错误返回 `400`，无效/过期码返回 `403`；同一身份在 300 秒内第 5 次失败返回 `429`，并提供 `Retry-After` 等待时间。详见[配对失败锁定](../integrations/gateway/authentication.md#配对失败锁定)
 
 ---
 

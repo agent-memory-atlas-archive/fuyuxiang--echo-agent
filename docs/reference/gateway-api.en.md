@@ -80,6 +80,8 @@ Content-Type: application/json
 
 A successful response is `{"status":"paired"}`. Pairing authorizes that platform/user pair; it does not issue a new API token.
 
+`platform`, `user_id`, and `code` must be non-empty strings of at most 128, 256, and 64 characters. Invalid input returns `400`; an invalid or expired code returns `403`. The fifth failed attempt for the same platform/user within 300 seconds returns `429` with a `Retry-After` header and `retry_after_seconds` response field. See [pairing failure lockout](../integrations/gateway/authentication.en.md#pairing-failure-lockout) for the capacity and lockout behavior.
+
 !!! tip "Pairing TTL"
     Unapproved pairing requests expire after `pairing_ttl_seconds` (default: 300). Adjust in config if your approval workflow is slower.
 

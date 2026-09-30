@@ -144,6 +144,8 @@ echo-agent gateway uninstall  # 取消注册
 
 > **本机访问边界**：零配置下的 loopback 网关只接受两类客户端——`echo-agent cli`，以及不携带浏览器 `Origin` 的原生客户端（脚本、SDK）。携带跨站 `Origin` 的浏览器请求一律拒绝，防止网页借用户浏览器驱动本机 agent（CSRF）。开放浏览器或 playground 访问的配置方式见[网关认证](https://fuyuxiang.github.io/echo-agent/integrations/gateway/authentication/)。
 
+配对码客户端在验证失败时会收到明确的错误状态：请求格式不合法为 `400`，配对码无效或过期为 `403`，同一身份触发临时锁定为 `429` 并附带 `Retry-After` 等待时间。输入限制及锁定规则见[网关认证](https://fuyuxiang.github.io/echo-agent/integrations/gateway/authentication/#配对失败锁定)。
+
 ---
 
 ## 文档
