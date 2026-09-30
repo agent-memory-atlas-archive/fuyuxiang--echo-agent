@@ -7,6 +7,7 @@ import json
 import hmac
 import secrets
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,7 @@ class GatewayAuth:
 
     def __init__(
         self, config: GatewayAuthConfig, data_dir: Path,
-        *, bound_host: str | None = None,
+        *, bound_host: str | None = None, max_tracked_failures: int = 10_000,
     ):
         self._mode = config.mode
         self._allowed = set(config.allowed_users)
@@ -66,7 +67,14 @@ class GatewayAuth:
 
         self._approved: dict[str, set[str]] = {}
         self._pending_codes: dict[str, dict[str, Any]] = {}
-        self._verify_failures: dict[str, list[float]] = {}
+        # Insertion-ordered so the oldest lockout record is the first eviction
+        # candidate. Bounded because the key is caller-supplied and the pairing
+        # verification endpoint is reachable without a token: one request with a
+        # fresh platform/user_id used to add one permanent entry.
+        self._verify_failures: OrderedDict[str, list[float]] = OrderedDict()
+        self._max_tracked_failures = max(1, int(max_tracked_failures))
+        # Next time the O(size) stale sweep may run; see _record_verify_failure.
+        self._next_failure_sweep = 0.0
         self._lockout_seconds = 300
         self._max_failures = 5
         self._load_approved()
@@ -401,9 +409,32 @@ class GatewayAuth:
         return len(recent) >= self._max_failures
 
     def _record_verify_failure(self, lockout_key: str) -> None:
-        if lockout_key not in self._verify_failures:
-            self._verify_failures[lockout_key] = []
-        self._verify_failures[lockout_key].append(time.time())
+        now = time.time()
+        self._verify_failures.setdefault(lockout_key, []).append(now)
+        self._verify_failures.move_to_end(lockout_key)
+        # Sweeping the whole table is O(size); this runs on an unauthenticated
+        # path, so it must not happen per request. Once per lockout window is
+        # enough to reclaim entries that can no longer lock anyone out, and
+        # overflow is handled below with an O(1) oldest-first eviction.
+        if now >= self._next_failure_sweep:
+            self._sweep_verify_failures(now)
+        while len(self._verify_failures) > self._max_tracked_failures:
+            self._verify_failures.popitem(last=False)
+
+    def _sweep_verify_failures(self, now: float) -> None:
+        """Drop lockout records whose failures have all left the window.
+
+        Such a record can never produce a lockout again (``_is_locked_out``
+        only counts failures inside the window), so dropping it loses no
+        protection.
+        """
+        self._next_failure_sweep = now + self._lockout_seconds
+        stale = [
+            key for key, failures in self._verify_failures.items()
+            if not failures or now - failures[-1] >= self._lockout_seconds
+        ]
+        for key in stale:
+            del self._verify_failures[key]
 
     def _load_approved(self) -> None:
         for path in self._data_dir.glob("*_approved.json"):
