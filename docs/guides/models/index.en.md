@@ -55,7 +55,7 @@ Echo Agent ships with 5 built-in provider types:
 | **OpenRouter** | OpenRouter unified gateway |
 
 !!! info "OpenAI-Compatible Endpoints"
-    Any service exposing an OpenAI-compatible API (including Ollama, LM Studio, vLLM) can be configured using the `openai` type — just change the `api_base`.
+    Any service exposing an OpenAI-compatible API (including Ollama, LM Studio, vLLM) can be configured through the OpenAI-compatible protocol — just change the `api_base`.
 
 ---
 
@@ -70,21 +70,18 @@ models:
 
   providers:
     - name: openai-main
-      type: openai
-      api_key: ${OPENAI_API_KEY}
+      api_key_env: OPENAI_API_KEY
       api_base: https://api.openai.com/v1
       models:
         - gpt-4o
         - gpt-4o-mini
 
     - name: anthropic
-      type: anthropic
-      api_key: ${ANTHROPIC_API_KEY}
+      api_key_env: ANTHROPIC_API_KEY
       models:
         - claude-sonnet-4-20250514
 
     - name: local-ollama
-      type: openai
       api_base: http://localhost:11434/v1
       models:
         - llama3:8b
@@ -107,15 +104,15 @@ models:
 When a provider is configured with multiple API keys, the system automatically enables rotation:
 
 ```yaml
-providers:
-  - name: openai-pool
-    type: openai
-    credential_pool:
-      - key: sk-key-1
-      - key: sk-key-2
-      - key: sk-key-3
-    models:
-      - gpt-4o
+models:
+  providers:
+    - name: openai
+      credential_pool:
+        - sk-key-1
+        - sk-key-2
+        - sk-key-3
+      models:
+        - gpt-4o
 ```
 
 !!! tip "Rotation Strategy"

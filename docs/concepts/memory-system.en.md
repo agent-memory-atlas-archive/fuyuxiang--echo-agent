@@ -214,7 +214,7 @@ effective_importance = importance * (0.5 ** (days_since_access / half_life))
 
 ### Decay Behavior
 
-- **base_half_life**: Base half-life determined by system configuration (default value TBD)
+- **base_half_life**: Base half-life determined by system configuration (30 days by default)
 - Each access (retrieval hit) triggers `access_count += 1` and `last_accessed` update
 - Access acts as "rehearsal", extending the half-life
 - When effective_importance falls below the archive threshold, the entry migrates to ARCHIVAL

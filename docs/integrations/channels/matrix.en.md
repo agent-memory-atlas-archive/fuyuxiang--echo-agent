@@ -14,11 +14,14 @@ channels:
     enabled: true
     homeserver: https://matrix.example.com
     user_id: "@echo-bot:example.com"
-    access_token: ${MATRIX_ACCESS_TOKEN}
+    access_token: ""
     allow_rooms:
       - "!abcdef123456:example.com"
       - "!support-room:example.com"
 ```
+
+For a secret kept outside YAML, set `ECHO_AGENT_CHANNELS__MATRIX__ACCESS_TOKEN` in the process environment, for example `export ECHO_AGENT_CHANNELS__MATRIX__ACCESS_TOKEN="$MATRIX_ACCESS_TOKEN"`. The general configuration loader does not expand environment placeholders in YAML.
+
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

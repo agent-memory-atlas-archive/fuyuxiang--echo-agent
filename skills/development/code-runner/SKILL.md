@@ -1,6 +1,6 @@
 ---
 name: code-runner
-description: "Execute Python code snippets in a sandboxed environment. Supports data analysis, visualization, and quick scripts."
+description: "Execute Python code snippets with best-effort resource limits. Supports data analysis, visualization, and quick scripts."
 version: 1.0.0
 metadata:
   echo:
@@ -9,7 +9,7 @@ metadata:
 
 # Code Runner
 
-Safe Python code execution with resource limits and import restrictions.
+Python code execution with resource limits and import restrictions; this is not an isolation boundary.
 
 ## Usage
 

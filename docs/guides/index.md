@@ -9,7 +9,7 @@
 | 章节 | 说明 |
 |------|------|
 | [模型接入](models/index.md) | 多模型配置、负载均衡、自定义端点 |
-| [工具使用与权限控制](tools-permissions.md) | 内置工具注册、权限策略、沙箱隔离 |
+| [工具使用与权限控制](tools-permissions.md) | 内置工具注册、权限策略与执行后端的隔离边界 |
 | [执行后端](execution-backends.md) | 本地/远程/容器化执行环境配置 |
 | [浏览器与媒体能力](browser-media.md) | 网页操作、截图、文件上传与媒体处理 |
 | [记忆管理](memory-management.md) | 短期/长期记忆、向量存储、记忆检索策略 |

@@ -17,13 +17,16 @@ channels:
     smtp_host: smtp.gmail.com
     smtp_port: 465
     username: bot@example.com
-    password: ${EMAIL_APP_PASSWORD}
+    password: ""
     use_ssl: true
     poll_interval_seconds: 30
     allow_from:
       - admin@example.com
       - support@example.com
 ```
+
+For a secret kept outside YAML, set `ECHO_AGENT_CHANNELS__EMAIL__PASSWORD` in the process environment, for example `export ECHO_AGENT_CHANNELS__EMAIL__PASSWORD="$EMAIL_APP_PASSWORD"`. The general configuration loader does not expand environment placeholders in YAML.
+
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

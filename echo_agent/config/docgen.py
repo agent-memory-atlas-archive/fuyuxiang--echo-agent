@@ -101,7 +101,23 @@ def render_markdown(lang: str = "zh") -> str:
     for info in _effective_fields():
         by_group.setdefault(_group_of(info.path), []).append(info)
     desc_col = "说明" if lang == "zh" else "description"
-    blocks: list[str] = [header]
+    if lang == "zh":
+        defaults_note = (
+            "本表的 `default` 列是配置 schema 的字段默认值，不一定是加载后的生效值。"
+            "包内 `echo_agent/config/default.yaml` 会覆盖其中部分字段；例如未提供用户配置时，"
+            "`execution.defaultExecutor` 生效为 `local`，`execution.networkPolicy` 生效为 `allow`。"
+            "`tools.exec.host` 另有独立默认值 `sandbox`，决定执行类工具使用的后端。"
+            "要查看当前环境的最终配置，请运行 `echo-agent config dump`。\n"
+        )
+    else:
+        defaults_note = (
+            "The `default` column shows schema field defaults, which may differ from the loaded configuration. "
+            "The packaged `echo_agent/config/default.yaml` overrides some fields: without a user config, "
+            "`execution.defaultExecutor` resolves to `local` and `execution.networkPolicy` to `allow`. "
+            "`tools.exec.host` separately defaults to `sandbox` and selects the backend for execution tools. "
+            "Run `echo-agent config dump` to inspect the final configuration in your environment.\n"
+        )
+    blocks: list[str] = [header, defaults_note]
     for group, infos in by_group.items():
         blocks.append(f"## {group}\n")
         blocks.append(f"| {header_field} | snake | type | default | choices | {desc_col} |")

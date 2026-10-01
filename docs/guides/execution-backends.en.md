@@ -4,12 +4,12 @@ Command and code tools (`exec`, `execute_code`, `process`) do not run inside the
 
 ## The four executors
 
-`execution.default_executor` selects the executor. It accepts four values and defaults to `sandbox`:
+`execution.default_executor` selects the backend when `tools.exec.host` is `auto`. Its schema default is `sandbox`, but the packaged defaults set it to `local`. Execution tools currently use the separate `tools.exec.host: sandbox` default:
 
 | Value | Isolation | Runs on | Suited to |
 |-------|-----------|---------|-----------|
 | `local` | none beyond the process | this machine, inside the workspace | fully trusted local development |
-| `sandbox` | a separate sandbox directory (default) | this machine, under `sandbox_root` | the default choice, balancing usability and isolation |
+| `sandbox` | a separate working directory, without OS isolation | this machine, under `sandbox_root` | trusted commands needing a temporary workspace copy |
 | `container` | a container | the local container runtime | strong isolation or a pinned environment |
 | `remote` | SSH | a remote host | when the compute or environment lives elsewhere |
 
@@ -30,8 +30,8 @@ execution:
 
 | Field | Default | Purpose |
 |-------|---------|---------|
-| `default_executor` | `sandbox` | Executor type |
-| `network_policy` | `deny` | Outbound policy: `allow` / `deny` / `restricted` |
+| `default_executor` | `local` (effective; schema: `sandbox`) | Backend when `tools.exec.host` is `auto` |
+| `network_policy` | `allow` (effective; schema: `deny`) | Outbound policy: `allow` / `deny` / `restricted` |
 | `sandbox_root` | `/tmp/echo-agent-sandbox` | Root directory for the `sandbox` executor |
 | `container_image` | `''` | Image used by the `container` executor |
 | `remote_host` | `''` | Target host for the `remote` executor |
@@ -41,7 +41,7 @@ execution:
 | `remote_connect_timeout` | `10` | SSH connect timeout in seconds |
 | `max_background_tasks` | `64` | Concurrency ceiling for background tasks |
 
-`network_policy` is passed to every executor. Because it defaults to `deny`, `web_fetch`, `web_search` and any tool carrying the `network.outbound` capability are withheld from the model — see the [security profile matrix](../reference/security-profile-matrix.md).
+`network_policy` is passed to the executor. The packaged defaults set it to `allow`. Setting it to `deny` prevents outbound tools such as `web_fetch` and `web_search` from registering. Command checks are policy checks, not OS network isolation; see the [security profile matrix](../reference/security-profile-matrix.md).
 
 ## local
 
@@ -54,7 +54,7 @@ execution:
 
 ## sandbox
 
-The default. Work runs in its own directory under `sandbox_root`, separate from the workspace.
+Work runs in a directory under `sandbox_root` after copying workspace contents there. The process still runs on the host and can access host files permitted to its user through absolute paths. This is not a security boundary for untrusted code.
 
 ```yaml
 execution:
@@ -96,7 +96,7 @@ The default `accept-new` accepts the host key on first connection. In production
 
 ## Overriding the executor per tool
 
-`tools.exec` has its own `host` field, which overrides `default_executor` for the `exec` tool alone:
+`tools.exec.host` defaults to `sandbox`. The resulting executor is shared by `exec`, `execute_code` and `process`; set it to `auto` to use `execution.default_executor`:
 
 ```yaml
 execution:
@@ -104,7 +104,7 @@ execution:
 
 tools:
   exec:
-    host: container        # only exec runs in a container
+    host: container        # all three execution tools share this container executor
 ```
 
 The remaining `tools.exec` fields constrain the command itself:
@@ -139,14 +139,14 @@ The list applies to `exec`, `execute_code` and background `process` commands. Co
 
 | Aspect | local | sandbox | container | remote |
 |--------|:-----:|:-------:|:---------:|:------:|
-| Isolation | none | medium | strong | depends on the host |
+| Isolation | none | working-directory separation only | depends on container configuration | depends on the host |
 | Extra prerequisites | none | none | container runtime | SSH reachability + key |
 | Startup cost | lowest | low | medium | medium |
-| Can reach the local workspace | yes | no | no | no |
+| Can reach the local workspace | yes | has a workspace copy; original may be reachable by absolute path | depends on mounts | depends on the remote host |
 
 ## Security guidance
 
-- Keep `network_policy: deny`; open it only when outbound access is genuinely needed, and prefer `restricted` first.
+- Set `network_policy: deny` explicitly when outbound tools must be withheld; command checks do not create a network namespace.
 - Do not switch to `local` for convenience: it has no isolation, so model-generated commands act directly on the workspace.
 - Keep `tools.exec.security` at `allowlist` and enumerate what you need in `allowed_commands`, rather than permitting everything and subtracting with `blocked_commands` — denylists are easy to work around.
 - With `remote`, set `remote_strict_host_key` to `"yes"`.

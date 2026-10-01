@@ -35,7 +35,7 @@ echo-agent gateway status  # check if already running
 
 - Verify token in request matches `gateway.auth.apiTokens`
 - Admin operations require `adminTokens`, not `apiTokens`
-- Check for lockout (5 failed attempts = 300s ban)
+- Pairing verification has a separate five-failure lockout; it does not explain an ordinary token mismatch.
 
 ### Dashboard blank page
 
@@ -75,19 +75,15 @@ echo-agent gateway status  # check if already running
 
 ### Tool stuck waiting for approval
 
-- Set `permissions.approval.mode: auto` for unattended operation
-- Or approve via TUI: `/approve`
+- Review `permissions.approval.mode` (`manual`, `smart`, or `off`) and `unattended_policy` before changing an unattended deployment.
+- Or approve through the terminal client's approval prompt.
 - Check `tools.profile` allows the tool
 
 ## Service
 
 ### Service won't start after upgrade
 
-```bash
-echo-agent migrate status   # check for pending migrations
-echo-agent migrate run      # apply them
-echo-agent gateway start
-```
+Inspect `echo-agent gateway logs` and run `echo-agent config validate`. SQLite schema migrations run automatically during database initialization. `echo-agent migrate` handles USER memory data, not startup schema changes. If the installed version cannot open existing data, restore a compatible [pre-upgrade backup](backup-restore.en.md) after stopping the service.
 
 ## Getting Help
 

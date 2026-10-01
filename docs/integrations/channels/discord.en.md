@@ -66,8 +66,8 @@ The permission integer (`permissions=2147551232`) includes:
 
 !!! tip
     Inject the token via environment variable to avoid hardcoding:
-    ```yaml
-    token: "${DISCORD_BOT_TOKEN}"
+    ```bash
+    export ECHO_AGENT_CHANNELS__DISCORD__TOKEN="$DISCORD_BOT_TOKEN"
     ```
 
 ---

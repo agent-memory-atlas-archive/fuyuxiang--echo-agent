@@ -54,7 +54,7 @@ Echo Agent 内置 5 种 Provider 类型：
 | **OpenRouter** | OpenRouter 统一网关 |
 
 !!! info "OpenAI 兼容端点"
-    任何提供 OpenAI 兼容 API 的服务（包括 Ollama、LM Studio、vLLM）均可通过 `openai` 类型接入，只需修改 `api_base` 即可。
+    任何提供 OpenAI 兼容 API 的服务（包括 Ollama、LM Studio、vLLM）均可通过 OpenAI 兼容协议接入，只需修改 `api_base` 即可。
 
 ---
 
@@ -69,21 +69,18 @@ models:
 
   providers:
     - name: openai-main
-      type: openai
-      api_key: ${OPENAI_API_KEY}
+      api_key_env: OPENAI_API_KEY
       api_base: https://api.openai.com/v1
       models:
         - gpt-4o
         - gpt-4o-mini
 
     - name: anthropic
-      type: anthropic
-      api_key: ${ANTHROPIC_API_KEY}
+      api_key_env: ANTHROPIC_API_KEY
       models:
         - claude-sonnet-4-20250514
 
     - name: local-ollama
-      type: openai
       api_base: http://localhost:11434/v1
       models:
         - llama3:8b
@@ -106,15 +103,15 @@ models:
 当单个 Provider 配置多个 API Key 时，系统自动启用轮换机制：
 
 ```yaml
-providers:
-  - name: openai-pool
-    type: openai
-    credential_pool:
-      - key: sk-key-1
-      - key: sk-key-2
-      - key: sk-key-3
-    models:
-      - gpt-4o
+models:
+  providers:
+    - name: openai
+      credential_pool:
+        - sk-key-1
+        - sk-key-2
+        - sk-key-3
+      models:
+        - gpt-4o
 ```
 
 !!! tip "密钥轮换策略"

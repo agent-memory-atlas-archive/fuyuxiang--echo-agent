@@ -1,221 +1,44 @@
-# 升级与迁移
+# 升级与数据迁移
 
-Echo Agent 的版本升级流程和数据库迁移操作指南。
+升级前阅读 [Changelog](https://github.com/fuyuxiang/echo-agent/blob/master/CHANGELOG.md)，确认兼容性变化，并备份工作区。下列命令以默认工作区 `~/.echo-agent` 和已安装的用户级 Gateway 服务为例。使用自定义 `--workspace` 或 `--config` 时，应替换为实际路径。
 
----
-
-## 版本策略
-
-Echo Agent 遵循语义化版本 (SemVer)：
-
-| 版本段 | 含义 | 数据兼容性 |
-|--------|------|-----------|
-| MAJOR (x.0.0) | 重大架构变更 | 可能需手动迁移 |
-| MINOR (0.x.0) | 新功能 | 自动迁移 |
-| PATCH (0.0.x) | Bug 修复 | 完全兼容 |
-
-当前版本：**v0.3.8 Beta**
-
-!!! warning "Beta 阶段注意"
-    Beta 期间 MINOR 版本升级可能包含破坏性变更。升级前务必阅读 Changelog 并备份数据。
-
----
-
-## 升级流程
-
-### 升级前清单
-
-1. **阅读 Changelog** — 确认目标版本的变更内容和破坏性变更
-2. **备份数据** — 完整备份 `~/.echo-agent/` 目录
-3. **检查兼容性** — 确认 Python 版本满足要求（3.11+）
-4. **确认迁移需求** — 查看是否需要数据库迁移
-5. **选择升级窗口** — 避免在活跃任务执行期间升级
-
-### 执行升级
+## 升级已安装的包
 
 ```bash
-# 1. 停止服务
 echo-agent gateway stop
-
-# 2. 备份（关键步骤）
-tar -czf ~/.echo-agent-backup-$(date +%Y%m%d).tar.gz ~/.echo-agent/
-
-# 3. 升级包
-pip install --upgrade echo-agent[all]
-
-# 4. 检查迁移状态
-echo-agent migrate status
-
-# 5. 执行迁移（如需要）
-echo-agent migrate run
-
-# 6. 验证
-echo-agent status
-
-# 7. 重启服务
-echo-agent gateway start
-```
-
-!!! tip "升级后验证"
-    升级后建议执行 `echo-agent config validate` 检查配置文件是否与新版本兼容。
-
----
-
-## 数据库迁移
-
-### migrate 命令
-
-Echo Agent 提供内置迁移工具，管理数据库 schema 变更：
-
-```bash
-# 查看当前迁移状态
-echo-agent migrate status
-
-# 执行待处理的迁移
-echo-agent migrate run
-
-# 回滚最近一次迁移
-echo-agent migrate rollback
-
-# 迁移 memory.md 格式（特殊迁移）
-echo-agent migrate memory-md
-```
-
-### migrate status 输出示例
-
-```
-数据库版本: v12
-最新版本:   v14
-待执行迁移:
-  - v13: 添加 knowledge_chunks 索引
-  - v14: 记忆关系表重构
-```
-
-### 执行迁移
-
-```bash
-$ echo-agent migrate run
-[1/2] 执行迁移 v13: 添加 knowledge_chunks 索引 ... 完成 (0.3s)
-[2/2] 执行迁移 v14: 记忆关系表重构 ... 完成 (1.2s)
-全部迁移完成。当前版本: v14
-```
-
-!!! danger "迁移前必须备份"
-    数据库迁移修改 schema 和数据，某些迁移不可逆。在执行 `migrate run` 前必须确保有可用的备份。
-
-### 迁移回滚
-
-如果迁移后发现问题：
-
-```bash
-# 回滚最近一次迁移
-echo-agent migrate rollback
-
-# 多次回滚
-echo-agent migrate rollback   # 回滚 v14
-echo-agent migrate rollback   # 回滚 v13
-```
-
-!!! warning "回滚限制"
-    并非所有迁移都支持回滚。涉及数据删除或格式转换的迁移可能标记为不可逆。此时只能从备份恢复。
-
-### memory-md 迁移
-
-将旧版 memory.md 格式的记忆数据迁移到结构化存储：
-
-```bash
-echo-agent migrate memory-md
-```
-
-此命令会：
-
-1. 扫描 memory.md 文件
-2. 解析记忆条目
-3. 导入到 SQLite 记忆表
-4. 保留原始文件作为备份
-
----
-
-## 跨大版本升级
-
-跨多个 MINOR 版本升级时，迁移将按顺序逐步执行：
-
-```bash
-# 例：从 v0.3.2 升级到 v0.3.7
-$ echo-agent migrate status
-待执行迁移:
-  - v0.3.3: ...
-  - v0.3.4: ...
-  - v0.3.5: ...
-  - v0.3.6: ...
-  - v0.3.7: ...
-
-$ echo-agent migrate run
-# 按顺序执行所有待处理迁移
-```
-
-!!! tip "逐版本升级"
-    如果跨越多个版本，建议先查阅每个中间版本的 Changelog，了解累计的破坏性变更。
-
----
-
-## 配置文件变更
-
-版本升级可能引入新的配置项或废弃旧配置：
-
-```bash
-# 验证当前配置
+tar -czf "$HOME/echo-agent-backup-$(date +%Y%m%d).tar.gz" -C "$HOME" .echo-agent
+pip install --upgrade "echo-agent[all]"
 echo-agent config validate
-
-# 查看配置说明（包含新增和废弃项）
-echo-agent config explain
-
-# 生成当前版本的完整默认配置
-echo-agent config gen-docs
-```
-
-### 配置加载优先级
-
-升级后如果遇到配置冲突，了解加载顺序有助于排查：
-
-```
-包默认值 → 用户 YAML (-c 或 ~/.echo-agent) → ECHO_AGENT_ 环境变量 → CLI 参数 → profile 默认值 → Pydantic 校验
-```
-
----
-
-## 故障恢复
-
-### 升级失败回退
-
-```bash
-# 1. 停止服务
-echo-agent gateway stop
-
-# 2. 回退 Python 包
-pip install echo-agent==0.3.6   # 回退到之前版本
-
-# 3. 回滚数据库（如已执行迁移）
-echo-agent migrate rollback
-
-# 4. 或从备份恢复
-rm -rf ~/.echo-agent
-tar -xzf ~/.echo-agent-backup-20240101.tar.gz -C ~/
-
-# 5. 重启
 echo-agent gateway start
+echo-agent gateway status
 ```
 
-### 常见升级问题
+如果没有安装后台服务，先停止前台运行的 `echo-agent run` 或 `echo-agent gateway` 进程，升级后重新启动。备份 SQLite 数据库前应停止写入。其他备份方式见[备份与恢复](backup-restore.md)。
 
-| 问题 | 原因 | 解决 |
-|------|------|------|
-| 迁移失败中断 | Schema 冲突或磁盘空间不足 | 从备份恢复，检查磁盘空间 |
-| 配置验证报错 | 废弃配置项 | 运行 `config validate` 查看具体项 |
-| 服务无法启动 | 依赖版本不兼容 | 检查 Python 版本，重装依赖 |
-| 记忆数据丢失 | 迁移 Bug | 从备份恢复，报告 Issue |
+SQLite 表结构迁移由 `echo_agent/storage/sqlite.py` 在数据库连接初始化时自动执行。**`echo-agent migrate` 不是数据库表结构迁移命令。**启动失败时应先查看错误日志，再决定是否从升级前备份恢复。
 
-!!! note "没有一站式的 upgrade 命令"
-    不存在 `echo-agent upgrade`。升级需按本页顺序手动执行：停止服务 → 备份 `data/echo_agent.db` → `pip install -U` → `echo-agent migrate run` → `echo-agent gateway restart`。
+## `migrate` 命令的用途
 
-    源码安装是例外：重复执行 `install.sh` 即为升级，脚本会检测到已有配置并跳过配置向导。但它同样不代替数据库备份，执行前请自行复制。
+当前 CLI 的 `migrate` 子命令处理 USER 记忆的归属键，以及旧 `MEMORY.*.md` 分片的导入：
+
+| 命令 | 作用 |
+|---|---|
+| `echo-agent migrate status` | 统计命中 `memory.principal_bindings` 的旧 `source_session` 和可选的空 scope USER 记忆；显示最近的记忆备份 |
+| `echo-agent migrate run --dry-run` | 预览将改写的 USER 记忆归属键 |
+| `echo-agent migrate run` | 确认后备份 `user_memory.json`，并改写命中绑定关系的归属键 |
+| `echo-agent migrate run --adopt-empty` | 同时收编空 scope、非 global 的 USER 记忆；应先预演并确认目标 owner |
+| `echo-agent migrate memory-md` | 将旧 `MEMORY.*.md` 分片中的事实导入记忆存储 |
+| `echo-agent migrate rollback` | 用最近的 `user_memory.json.migbak-*` 备份覆盖该文件；**不会回滚 SQLite 表结构** |
+
+只有更新说明或运维计划要求迁移记忆归属时才运行这些命令。`status` 不报告数据库版本，也不列出待执行的 SQL 迁移。
+
+## 回退版本
+
+`checkpoint restore` 恢复工作区文件快照，不包含数据库、会话、记忆和日志目录。回退 Python 包也不会逆向改写数据库。需要恢复升级前的数据时，使用升级前创建的完整备份：
+
+1. 停止 Gateway 或前台进程。
+2. 保存当前数据副本，以便排查或重新升级。
+3. 安装目标旧版本，并将其对应的完整备份恢复到原工作区。
+4. 运行 `echo-agent config validate`，启动并检查日志与关键功能。
+
+不要把 `echo-agent migrate rollback` 用作数据库回退。具体恢复命令见[备份与恢复](backup-restore.md)。跨多个 Beta 版本升级或降级时，逐版本查阅更新说明；不应假定每个数据变化都有可逆的迁移脚本。

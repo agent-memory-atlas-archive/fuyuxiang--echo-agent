@@ -31,7 +31,7 @@ source .venv/bin/activate
 ### 3. Install Dependencies
 
 ```bash
-# Install all optional dependencies + dev tools
+# Install common optional packages listed in the all group plus dev tools
 pip install -e ".[all,dev]"
 ```
 

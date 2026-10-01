@@ -1,62 +1,44 @@
 # Runtime Modes
 
-Echo Agent offers three runtime modes for different scenarios from local development to production.
+Both `echo-agent run` and `echo-agent gateway` start the full Agent runtime. The former starts the HTTP/WebSocket Gateway only when `gateway.enabled` is true; the latter enables it for that run even when the setting is absent. Both run in the foreground by default. `echo-agent cli` is a thin client for an existing Gateway.
 
----
+| Command | Gateway | Process management | Use |
+|---|---|---|---|
+| `echo-agent run` | Enabled when `gateway.enabled: true` | Current terminal | Local use and debugging |
+| `echo-agent gateway` | Enabled | Current terminal | Foreground Gateway |
+| `echo-agent gateway install`, `start` | Enabled | systemd or launchd | Background service |
+| `echo-agent cli` | Connects to existing Gateway | Current terminal | Additional terminal clients |
 
-## Mode Comparison
+Normally only one full Agent runtime should write a workspace. Do not run `run` and `gateway` against the same workspace at the same time.
 
-| Mode | Command | Use Case | Persistence |
-|------|---------|----------|-------------|
-| Foreground | `echo-agent run` | Development, debugging | Process lifetime |
-| Gateway | `echo-agent gateway` | Production, multi-channel | System service |
-| CLI Client | `echo-agent cli` | Attach to running Gateway | N/A (thin client) |
-
-## Foreground Mode
+## Local run
 
 ```bash
 echo-agent run
 ```
 
-Runs the agent in the current terminal. Suitable for:
+The command selects the run mode; `gateway.enabled` determines whether `run` also exposes the Gateway. Set logging level through `observability.log_level` or `ECHO_AGENT_OBSERVABILITY__LOG_LEVEL`; `run` has no `--log-level` option. See [filesystem layout](../reference/filesystem-layout.en.md) for configuration lookup.
 
-- First-time setup and testing
-- Development and debugging
-- Single-channel usage (CLI channel only)
-
-The process exits when the terminal closes.
-
-## Gateway Mode
+## Gateway service
 
 ```bash
-# Run in foreground
-echo-agent gateway
-
-# Install as system service
-echo-agent gateway install
+echo-agent gateway                 # foreground
+echo-agent gateway install         # register background service
 echo-agent gateway start
+echo-agent gateway status
+echo-agent gateway logs --follow
 ```
 
-Gateway mode provides:
+The Gateway defaults to `127.0.0.1:58123` and an HTTP API prefix of `/api/v1`. It accepts WebSocket sessions and Dashboard connections. Management endpoints and message ingestion have different authorization checks. `gateway.auth.mode` (`open`, `allowlist`, or `pairing`) controls user authorization; `gateway.auth.api_tokens` controls API-token checks. An ordinary API token does not create full multi-tenant resource isolation. See [Gateway authentication](../integrations/gateway/authentication.en.md) and the [security model](../concepts/security-model.en.md).
 
-- HTTP/WebSocket API for external access
-- Multi-channel support (all 14 channels)
-- Dashboard web UI
-- Background service management
-- A2A protocol endpoint
+See [background service](background-service.en.md) for install paths, stop timeout, and environment handling.
 
-!!! warning "Multi-client is not multi-tenant"
-    Gateway authentication provides request admission and read/admin scopes, but ordinary API tokens are not a universal user identity for every stored resource. Dashboard and several APIs expose instance-wide state. Mutually untrusted users should use separate instances and data directories; see the [security model](../concepts/security-model.md#multi-client-tenant-boundary).
-
-## CLI Client Mode
+## CLI client
 
 ```bash
 echo-agent cli
+echo-agent cli --tui
+echo-agent cli --port 58123 --token your-api-token
 ```
 
-Attaches to a running local Gateway as a thin client. Native terminal
-scrollback is the default; use `echo-agent cli --tui` for the full-screen UI.
-The Gateway must already be running.
-
-!!! tip
-    Use `echo-agent status` to check if Gateway is running and which channels are active.
+The CLI client connects to a local Gateway over WebSocket; it does not run another Agent. The inline terminal UI is the default; `--tui` selects the full-screen UI. Start the Gateway first. SSH port forwarding can expose a remote deployment through local loopback.

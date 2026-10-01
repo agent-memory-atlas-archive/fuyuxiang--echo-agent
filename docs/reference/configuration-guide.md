@@ -87,7 +87,7 @@ gateway:
   port: 58123
 ```
 
-**execution** — 执行后端。`default_executor` 默认 `sandbox`；`network_policy` 默认 `deny`，改为 `allow` 或 `restricted` 才允许出站访问。
+**execution** — 执行后端。`default_executor` 的 schema 默认值为 `sandbox`，包内默认配置覆盖为 `local`；`network_policy` 的 schema 默认值为 `deny`，包内默认配置覆盖为 `allow`。执行工具另外使用 `tools.exec.host`，默认 `sandbox`。
 
 **observability** — 日志与追踪。`log_level` 默认 `INFO`；`trace_enabled`、`otel_enabled` 默认开启；`otel_endpoint` 为空时不导出。
 

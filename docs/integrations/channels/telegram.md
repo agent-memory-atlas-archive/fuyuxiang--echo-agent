@@ -47,8 +47,8 @@ channels:
 
 !!! warning
     Token 等同于 Bot 的完整访问权限，请勿提交到公开仓库。建议通过环境变量注入：
-    ```yaml
-    token: "${TELEGRAM_BOT_TOKEN}"
+    ```bash
+    export ECHO_AGENT_CHANNELS__TELEGRAM__TOKEN="$TELEGRAM_BOT_TOKEN"
     ```
 
 如需获取用户 ID 用于 `allow_from`：

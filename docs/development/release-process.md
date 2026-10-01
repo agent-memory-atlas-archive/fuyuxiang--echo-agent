@@ -73,6 +73,6 @@ git push origin v0.3.x
 但有几处版本号是手写在正文里的，发版时需一并更新：
 
 - `docs/index.md` 与 `docs/index.en.md` 的项目状态块
-- `docs/operations/upgrade-migrations.md` 的「当前版本」与升级示例
+- `docs/operations/upgrade-migrations.md` 与英文版中的升级命令和迁移范围（若本次发布有变化）
 
 改完这些页面的推送会触发 `docs.yml` 重新部署，无需手动干预。

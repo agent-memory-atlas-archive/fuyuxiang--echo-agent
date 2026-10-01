@@ -17,7 +17,7 @@ Typical request breakdown:
 | Bottleneck | Symptom | Where to tune |
 |------------|---------|---------------|
 | Model latency | Long wait before the first token | Model selection, routing, compression |
-| SQLite I/O | Slow memory retrieval | Storage path, periodic VACUUM |
+| SQLite I/O | Slow task or cost queries | Check local storage and indexes; schedule VACUUM if needed |
 | Process memory | OOM or swapping | Spill settings, session trimming |
 | Knowledge retrieval | Slow similarity search | Chunking, index rebuild |
 | Tool execution | External calls time out | Per-tool timeouts, parallel calls |
@@ -77,11 +77,11 @@ agent:
 
 ## SQLite
 
-Echo Agent stores metadata and memory in SQLite.
+Echo Agent stores part of its runtime data in SQLite. USER and ENVIRONMENT memory entries are stored separately as JSON files under `storage.memory_dir`.
 
 ### WAL mode
 
-SQLite connection parameters (`journal_mode`, `synchronous`, `cache_size`, `mmap_size` and other PRAGMAs) **cannot be tuned through configuration** — there is no `database` section, and the code sets none of these PRAGMAs.
+`echo_agent/storage/sqlite.py` sets `PRAGMA journal_mode=WAL` when connecting. There is no general `database` configuration section or exposed tuning field for `synchronous`, `cache_size`, or `mmap_size`.
 
 What is configurable is the set of storage paths, under `storage`:
 
@@ -190,7 +190,7 @@ There is no unified `network` section, and no connection-pool or global-timeout 
 
 | Setting | Purpose |
 |---------|---------|
-| `execution.network_policy` | Master outbound switch, defaults to `deny` |
+| `execution.network_policy` | Master outbound switch; packaged default `allow` (schema default `deny`) |
 | `tools.web.proxy` | Proxy for the web tool |
 | `tools.web.timeout_seconds` | Web tool timeout, default `30` |
 | `tools.browser.nav_timeout_sec` | Browser navigation timeout |
@@ -247,5 +247,5 @@ echo-agent deps status
 echo-agent config validate
 
 # Cost analysis (find expensive operations)
-echo-agent cost --group-by model
+echo-agent cost --days 7
 ```

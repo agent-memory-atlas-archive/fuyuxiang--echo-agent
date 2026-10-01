@@ -247,7 +247,7 @@ mkdir my-echo-plugin && cd my-echo-plugin
 ln -s $(pwd) ~/.echo-agent/plugins/my-echo-plugin
 
 # 启动 Echo Agent，观察插件加载日志
-echo-agent --log-level DEBUG
+ECHO_AGENT_OBSERVABILITY__LOG_LEVEL=DEBUG echo-agent run
 ```
 
 ### 5. 打包发布

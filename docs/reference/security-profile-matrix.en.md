@@ -57,7 +57,7 @@ Denied capabilities: `code.exec`, `fs.write`, `process.exec`, `process.manage`, 
 1. **Explicit deny** — a tool named in `tools.deny` is rejected. This layer has the highest precedence and cannot be waived by any other setting.
 2. **Allowlist** — if `tools.allow` is non-empty it becomes the only allowlist and the profile no longer participates; otherwise the `tools.profile` tier or `tools.also_allow` decides.
 3. **Deployment denials** — the tool-name and capability rules added by `security.profile`. A tool also named in `tools.allow` or `tools.also_allow` is exempt from this layer.
-4. **Network policy** — when `execution.network_policy` is `deny`, this rejects `web_fetch`, `web_search` and any tool carrying the `network.outbound` capability. Note that `deny` is the default.
+4. **Network policy** — when `execution.network_policy` is `deny`, this rejects `web_fetch`, `web_search` and any tool carrying the `network.outbound` capability. The schema default is `deny`, but the packaged default configuration sets `allow`.
 
 A denied tool does not raise an error: it is simply absent from the model's tool list, and one INFO-level line is logged — `Tool policy skipped N tools`. When investigating "the agent never called my tool", check that log line first.
 
@@ -70,7 +70,7 @@ A denied tool does not raise an error: it is simply absent from the model's tool
 | `tools.also_allow` | list[str] | `[]` | Permits tools beyond the profile and exempts them from deployment denials |
 | `tools.profile` | enum | `full` | Tier allowlist |
 | `security.profile` | enum | `personal_cli` | Deployment baseline |
-| `execution.network_policy` | `allow` / `deny` / `restricted` | `deny` | Outbound network policy |
+| `execution.network_policy` | `allow` / `deny` / `restricted` | `allow` (packaged); `deny` (schema) | Outbound network policy |
 
 ## Approval
 

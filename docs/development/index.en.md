@@ -42,4 +42,4 @@ cd web && pnpm build && pnpm test --run
 - **Test first** — New features must include corresponding test cases
 - **Type safety** — Use Pydantic models and type hints
 - **Minimal dependencies** — Optional features isolated via extras (e.g., `[openai]`, `[browser]`)
-- **Backward compatible** — Config changes go through migration mechanisms, never break existing deployments
+- **Compatibility notes** — Document configuration or data-format changes in the Changelog with verifiable upgrade and rollback steps

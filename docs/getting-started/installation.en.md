@@ -5,20 +5,17 @@
 | Item | Minimum | Recommended |
 |------|---------|-------------|
 | Python | 3.11 | 3.12 |
-| OS | Linux / macOS / Windows | Ubuntu 22.04+ / macOS 13+ |
-| RAM | 512 MB | 2 GB+ |
-| Disk | 200 MB | 1 GB+ (with vector indices) |
+| OS | See below | CI runs on Ubuntu |
+| RAM | Depends on models and workload | Size through deployment testing |
+| Disk | Depends on optional features and data | Plan for deployment volume |
 
 **OS Support Matrix:**
 
 | Operating System | Status | Notes |
 |-----------------|--------|-------|
-| Ubuntu 22.04+ | :white_check_mark: Fully supported | Recommended for production |
-| Debian 12+ | :white_check_mark: Fully supported | |
-| macOS 13+ (ARM/x86) | :white_check_mark: Fully supported | |
-| Windows + WSL2 | :white_check_mark: Fully supported | Recommended for Windows users |
-| Native Windows | :warning: Basic support | Some limitations, see below |
-| Alpine Linux | :warning: Basic support | Manual build deps required |
+| Ubuntu | Covered by CI | Tests run with Python 3.11 and 3.12 |
+| Debian / macOS / Windows with WSL2 | Verify in deployment | Meets installation constraints but is outside the current CI OS matrix |
+| Native Windows / Alpine Linux | Verify each feature | External commands, process tools, or binary dependencies may differ |
 
 ---
 
@@ -26,10 +23,10 @@
 
 === "pip (Recommended)"
 
-    Install the full version (all model providers and features):
+    Install the explicitly listed set of common optional packages (see `pyproject.toml` for each extra's exact scope):
 
     ```bash
-    pip install echo-agent[all]
+    pip install "echo-agent[all]"
     ```
 
     Or install core + specific providers only:
@@ -39,13 +36,13 @@
     pip install echo-agent
 
     # Add model providers as needed
-    pip install echo-agent[openai]
-    pip install echo-agent[anthropic]
-    pip install echo-agent[gemini]
-    pip install echo-agent[bedrock]
+    pip install "echo-agent[openai]"
+    pip install "echo-agent[anthropic]"
+    pip install "echo-agent[gemini]"
+    pip install "echo-agent[bedrock]"
 
     # Combined install
-    pip install echo-agent[openai,anthropic,vector,browser]
+    pip install "echo-agent[openai,anthropic,vector,browser]"
     ```
 
 === "From Source"
@@ -70,12 +67,12 @@
     curl -fsSL https://raw.githubusercontent.com/fuyuxiang/echo-agent/master/scripts/install.sh | bash
     ```
 
-    The script automatically detects your system, installs Python if needed, and installs echo-agent[all] via pip.
+    The script checks the environment, prepares Python and `uv` when needed, and installs the project and selected dependencies into a virtual environment inside its source checkout.
 
     !!! note "Script Behavior"
-        - Detects and installs Python 3.11+ (via system package manager)
-        - Creates a virtual environment at `~/.echo-agent/venv`
-        - Installs `echo-agent[all]` into the virtual environment
+        - Checks for Python 3.11+ and follows platform-specific installation or selection steps
+        - Installs source to `~/.echo-agent/echo-agent` by default, with `venv/` inside it; `ECHO_INSTALL_DIR` can change this
+        - Uses `uv` to install the project into the virtual environment; selected extras depend on the installation flow
         - Symlinks the `echo-agent` command to `~/.local/bin`
 
 ---
@@ -98,7 +95,7 @@
 | `tokenizers` | Token counting | tiktoken |
 | `otel` | OpenTelemetry tracing | opentelemetry-* |
 | `skills` | Built-in skill deps | duckduckgo_search, trafilatura, etc. |
-| `all` | Full install | Everything above |
+| `all` | Explicitly listed common optional packages | See `pyproject.toml`; it does not automatically include every separate extra |
 
 ---
 
@@ -107,7 +104,7 @@
 !!! warning "Native Windows Limitations"
     Native Windows installation has the following known limitations:
 
-    - `faiss-cpu` does not provide official Windows wheels; use conda or unofficial sources
+    - Some binary dependencies may lack a usable wheel on native Windows; verify the target Python version and platform first
     - Signal handling (graceful shutdown) behaves differently from Unix
     - Some skill dependencies (e.g., `tesseract`) require separate installation
     - WSL2 is strongly recommended instead
@@ -119,10 +116,9 @@
     python --version
 
     # Minimal install (no faiss-cpu)
-    pip install echo-agent[openai,anthropic]
+    pip install "echo-agent[openai,anthropic]"
 
-    # Full install
-    pip install echo-agent[all]
+    # Add and verify other extras only as needed
     ```
 
 !!! note "faiss and fastembed are different things"
@@ -134,7 +130,7 @@
 
 ## Frontend Dashboard Build
 
-The built-in Dashboard is pre-packaged in the `echo-agent[all]` wheel. If you installed from source and need the Dashboard:
+Wheels built by the release process contain Dashboard assets; installing the `[all]` extra does not determine whether frontend assets are bundled. If you installed from source and need the Dashboard:
 
 ```bash
 # Install Node.js dependencies
@@ -184,10 +180,10 @@ echo-agent --version
 echo-agent status
 
 # Run dependency check
-echo-agent deps
+echo-agent deps status
 ```
 
-`echo-agent deps` checks all optional dependencies and reports any missing items.
+`echo-agent deps status` checks optional features registered with the dependency manager and reports missing packages. Check other extras against `pyproject.toml` separately.
 
 !!! tip "Success Indicator"
     Seeing the version number confirms a successful installation. Next, read the [Quickstart](quickstart.en.md) to complete initial configuration.

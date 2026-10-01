@@ -1,13 +1,13 @@
 # Quickstart
 
-Go from installation to your first message in 5 minutes.
+Follow these steps to install, configure a model, and start your first conversation. The time required depends on dependency downloads and the model service.
 
 ---
 
 ## Step 1: Install
 
 ```bash
-pip install echo-agent[all]
+pip install "echo-agent[all]"
 ```
 
 Verify the installation:
@@ -23,7 +23,7 @@ echo-agent --version
     ```bash
     python -m venv ~/.echo-agent/venv
     source ~/.echo-agent/venv/bin/activate
-    pip install echo-agent[all]
+    pip install "echo-agent[all]"
     ```
 
 ---
@@ -49,11 +49,15 @@ Configuration is saved to `~/.echo-agent/config.yaml`.
     ```bash
     mkdir -p ~/.echo-agent
     cat > ~/.echo-agent/config.yaml << 'EOF'
-    model:
-      provider: openai
-      model: gpt-4o
-      api_key: sk-your-key-here
+    models:
+      default_model: gpt-4o
+      providers:
+        - name: openai
+          models: [gpt-4o]
+          api_key_env: OPENAI_API_KEY
     EOF
+    export OPENAI_API_KEY=sk-your-key-here
+    echo-agent config validate
     ```
 
 ---
@@ -64,16 +68,7 @@ Configuration is saved to `~/.echo-agent/config.yaml`.
 echo-agent run
 ```
 
-On successful startup, you'll see output like:
-
-```
-[INFO] Echo Agent v0.3.8 starting...
-[INFO] Model: openai/gpt-4o
-[INFO] Memory: loaded (42 entries)
-[INFO] Skills: 12 active
-[INFO] Channels: cli
-[INFO] Ready. Type your message below.
-```
+Enter a message at the terminal prompt after startup. If the model connection fails, check the configuration with `echo-agent config validate`.
 
 ---
 
@@ -91,7 +86,7 @@ The Agent will respond and remember the conversation. You can continue chatting 
 
 ## Step 5: Verify Success
 
-Confirm that everything is working:
+In another terminal, inspect the configuration and cost report:
 
 ```bash
 # Check running status
@@ -100,8 +95,6 @@ echo-agent status
 # View cost statistics
 echo-agent cost
 
-# List loaded skills
-echo-agent skill list
 ```
 
 !!! tip "Verify Memory"
@@ -118,14 +111,7 @@ You've successfully run Echo Agent. Here's where to go next:
 - **Open the Dashboard** — Manage your Agent via the web panel:
   ```bash
   echo-agent gateway
-  # Open http://localhost:8080 in your browser
+  # Open http://127.0.0.1:58123 (default port)
   ```
-- **Explore skills** — View and manage the Agent's skill library:
-  ```bash
-  echo-agent skill list
-  echo-agent evolution status
-  ```
-- **Scheduled tasks** — Have the Agent run tasks on a schedule:
-  ```bash
-  echo-agent cron add "Report weather every morning at 9am" --schedule "0 9 * * *"
-  ```
+- **Explore skills** — View loaded skills on the Dashboard Skills page. `echo-agent skill list-staged` lists only candidates awaiting approval.
+- **Scheduled tasks** — Create jobs on the Dashboard Cron page. The CLI `cron` command only supports `list`, `authorize`, and `revoke`; see [scheduled jobs](../guides/scheduled-jobs.en.md).

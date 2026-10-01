@@ -42,4 +42,4 @@ cd web && pnpm build && pnpm test --run
 - **测试先行** — 新功能需附带对应测试用例
 - **类型安全** — 使用 Pydantic model 和 type hints
 - **最小依赖** — 可选功能通过 extras 隔离（如 `[openai]`、`[browser]`）
-- **向后兼容** — 配置变更走 migration 机制，不破坏现有部署
+- **兼容性说明** — 配置或数据格式变更应更新 Changelog，并提供可验证的升级与回退步骤

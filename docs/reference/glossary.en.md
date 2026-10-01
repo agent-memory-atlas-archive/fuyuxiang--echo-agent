@@ -1,77 +1,32 @@
 # Glossary
 
-术语表。
+These definitions follow the current configuration, routes, and types in the source tree.
 
----
-
-## A
-
-**Agent Loop** — Agent 的核心处理循环，从接收事件到产生响应的完整流程。
-
-**Agent Runtime** — Echo Agent 的核心执行环境，管理 Agent 生命周期。
-
-**A2A (Agent-to-Agent)** — A JSON-RPC task protocol. Echo Agent currently exposes an inbound service for external peers; it does not yet provide a production outbound A2A delegation entry point.
-
-**Approval** — 工具执行前的用户确认机制。
-
-## C
-
-**Channel** — 消息接入通道适配器，如 Telegram、Discord 等。
-
-**Capability** — 工具声明的能力标签，用于权限控制。
-
-**Checkpoint** — 文件级别的变更快照，支持回滚。
-
-**Compression** — 当上下文接近模型窗口时的历史消息压缩。
-
-**Consolidation** — 记忆整合过程，合并重复或相关的记忆片段。
-
-## E
-
-**Evolution** — 自进化机制，通过轨迹捕获和反思生成候选改进。
-
-**Evaluation** — 评估框架，用于测试 Agent 行为质量。
-
-## G
-
-**Gateway** — HTTP/WebSocket 服务器，提供 API 和多通道接入。
-
-## K
-
-**Knowledge** — 知识库系统，支持文档上传、向量索引和语义搜索。
-
-## M
-
-**MCP (Model Context Protocol)** — 模型上下文协议，标准化的外部工具接入方式。
-
-**Memory** — 记忆系统，分四层：Working、Episodic、Semantic、Archival。
-
-## O
-
-**Owner/Scope** — 记忆和数据的归属与隔离范围。
-
-## P
-
-**Plugin** — 可加载的 Python 扩展包。
-
-**Profile** — 预设的安全/工具/认知配置档位。
-
-## S
-
-**Session** — 由 channel + user + chat + thread 组成的会话上下文。
-
-**Skill** — 提供领域知识和工作流的能力包（SKILL.md 格式）。
-
-**Spill** — 工具输出超阈值时的溢出存储机制。
-
-## T
-
-**Task** — 任务管理单元，支持 Kanban 状态流转。
-
-**Tool** — Agent 可调用的可执行能力接口。
-
-## W
-
-**Workflow** — 多步骤任务编排。
-
-**Workspace** — Echo Agent 的工作目录，包含配置和运行时状态。
+| Term | Definition |
+|---|---|
+| **A2A** | Agent-to-agent task protocol using JSON-RPC; the current implementation provides an inbound service. |
+| **Agent Loop** | Processing loop from inbound event to response. |
+| **Approval** | Review before a tool call, controlled by `permissions.approval.mode`. |
+| **Channel** | Message adapter for endpoints such as Telegram, Discord, and CLI. |
+| **Checkpoint** | Shadow Git snapshot of workspace files; excludes the database, sessions, memory, and logs, so it is not a full backup. |
+| **Clarification** | Flow in which the agent asks the user for missing information. |
+| **Compression** | Compaction of older session messages to control model-context length. |
+| **Cron Job** | Job triggered by the scheduler. |
+| **Dashboard** | Web interface using the Gateway API and `/ws/dashboard`. |
+| **Execution Backend** | Backend selected by `tools.exec.host` for execution tools; `sandbox` copies the working directory but does not provide OS-level isolation. |
+| **Gateway** | Service exposing HTTP APIs, WebSockets, and Dashboard assets. |
+| **Knowledge** | Indexed documents for retrieval, stored separately from agent memory. |
+| **Memory** | Persistent memory organized by type and scope, with retrieval and forgetting policies. |
+| **Migration** | SQLite schema migration runs automatically during database initialization; `echo-agent migrate` only updates USER memory ownership and imports legacy `MEMORY.*.md` shards. |
+| **Multi-Agent** | Task execution involving multiple collaborating agents. |
+| **OpenTelemetry** | Optional trace and metric export framework; current code creates spans but not the formerly documented named business metric instruments. |
+| **Pairing** | Gateway's short-lived code authorization for a platform/user identity; it does not issue an API token. |
+| **Plugin** | Loadable Python extension that can register tools, channels, or other integrations. |
+| **Risk Category** | Tool risk levels are `READ_ONLY`, `WRITE`, `EXEC`, and `DANGEROUS`. Names such as `MINIMAL_TOOLS` identify tool-profile sets, not risk levels. |
+| **Security Profile** | Deployment profile: `personal_cli`, `daemon`, or `public_gateway`. |
+| **Session** | Conversation context determined by channel, user, chat, and optional thread. |
+| **Skill** | Knowledge or workflow described by `SKILL.md`; some candidate skills require approval. |
+| **Spill** | Storage for oversized tool output, referenced in conversation and retrievable with `read_spill`. |
+| **Tool** | Callable operation exposed to the agent; execution tools include `exec`, `execute_code`, and `process`. |
+| **Tools Profile** | Tool admission set: `minimal`, `messaging`, `coding`, or `full`. |
+| **Workspace** | Directory containing configuration, runtime data, and working files. |

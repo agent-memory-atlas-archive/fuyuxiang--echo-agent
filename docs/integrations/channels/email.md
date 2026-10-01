@@ -17,13 +17,16 @@ channels:
     smtp_host: smtp.gmail.com
     smtp_port: 465
     username: bot@example.com
-    password: ${EMAIL_APP_PASSWORD}
+    password: ""
     use_ssl: true
     poll_interval_seconds: 30
     allow_from:
       - admin@example.com
       - support@example.com
 ```
+
+若不把密钥写入 YAML，请在进程环境中设置 `ECHO_AGENT_CHANNELS__EMAIL__PASSWORD`，例如 `export ECHO_AGENT_CHANNELS__EMAIL__PASSWORD="$EMAIL_APP_PASSWORD"`。通用配置加载器不会展开 YAML 中的环境变量占位符。
+
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|

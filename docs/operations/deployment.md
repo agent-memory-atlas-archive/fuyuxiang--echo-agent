@@ -1,86 +1,45 @@
 # 部署方案
 
-本文介绍 Echo Agent 在不同环境下的部署拓扑和配置要点。
+Echo Agent 可前台运行，也可将 Gateway 注册为系统服务。默认工作区为 `~/.echo-agent`；实际配置和数据位置以 `echo-agent config dump` 为准。
 
----
-
-## 部署拓扑一览
-
-| 方案 | 复杂度 | 适用场景 |
-|------|--------|---------|
-| 单机直接部署 | 低 | 个人使用、小团队 |
-| Docker 容器 | 中 | 隔离环境、CI/CD |
-| 反向代理 + Gateway | 中 | 需要 HTTPS / 域名访问 |
-| 多实例部署 | 高 | 多用户隔离、高可用 |
-
----
-
-## 单机直接部署
-
-最简方案，适合个人开发者和小团队：
+## 本机运行
 
 ```bash
-# 安装
-pip install echo-agent[all]
+pip install "echo-agent[all]"
 echo-agent setup
-
-# 部署为后台服务
-echo-agent gateway install
-echo-agent gateway start
+echo-agent run
 ```
 
-### 目录结构
+`echo-agent run` 启动完整 Agent；仅当 `gateway.enabled: true` 时同时启动 Gateway。若只需单独启动 Gateway，可运行 `echo-agent gateway`（前台）；用户级后台服务可用 `echo-agent gateway install` 和 `echo-agent gateway start` 管理。服务配置、日志及平台差异见[后台服务](background-service.md)。
 
-```
-~/.echo-agent/                 # 全局数据目录
-├── config.yaml                # 主配置文件
-├── data/
-│   ├── echo_agent.db          # SQLite 主数据库
-│   ├── memory/                # 记忆存储
-│   ├── knowledge/             # 知识库索引
-│   ├── spill/                 # 大输出溢写
-│   ├── logs/                  # 运行日志
-│   └── checkpoints/           # 状态检查点
-└── env                        # 环境变量文件（可选）
-```
+默认 Gateway 地址为 `127.0.0.1:58123`，健康检查为 `http://127.0.0.1:58123/api/v1/health`。也可以通过 `--config`、`--workspace` 或对应配置项指定独立的配置和工作区。配置文件搜索顺序与工作区主要目录见[文件系统布局](../reference/filesystem-layout.md)。
 
-### 工作区数据
+## Docker 示例
 
-除全局目录外，每个项目工作区可有独立数据：
-
-```
-./your-project/
-└── .echo-agent/               # 工作区级数据
-    ├── config.yaml            # 工作区配置覆盖
-    └── data/                  # 工作区级记忆/知识
-```
-
----
-
-## Docker 容器部署
-
-### Dockerfile 示例
+仓库不提供预构建 Docker 镜像。以下示例需要自行保存为 `Dockerfile` 和 Compose 文件。容器中的 Gateway 必须监听 `0.0.0.0` 才能接收转发流量；绑定非回环地址时必须配置 API 令牌，否则 Gateway 拒绝启动。
 
 ```dockerfile
 FROM python:3.11-slim
-
-RUN pip install echo-agent[all]
-
-# 数据目录挂载点
-VOLUME /data/echo-agent
-
-ENV ECHO_AGENT_HOME=/data/echo-agent
-ENV ECHO_AGENT_GATEWAY_HOST=0.0.0.0
-
+RUN pip install "echo-agent[all]"
 EXPOSE 58123
-
-ENTRYPOINT ["echo-agent", "gateway", "--foreground"]
+ENTRYPOINT ["echo-agent", "gateway", "--workspace", "/data/echo-agent", "--config", "/data/echo-agent/echo-agent.yaml"]
 ```
 
-### docker-compose.yml
+将配置文件保存为 `./echo-agent.yaml`。下面的令牌仅为占位示例，实际部署应使用随机生成的值，并限制该文件的访问权限：
 
 ```yaml
-version: "3.8"
+workspace: /data/echo-agent
+gateway:
+  host: "0.0.0.0"
+  port: 58123
+  auth:
+    mode: allowlist
+    api_tokens: ["replace-with-a-random-token"]
+    allowed_users: ["cli:local"]  # 默认 CLI 用户；其他调用方按实际身份添加
+    allowed_hosts: ["localhost", "127.0.0.1"]
+```
+
+```yaml
 services:
   echo-agent:
     build: .
@@ -88,159 +47,32 @@ services:
       - "127.0.0.1:58123:58123"
     volumes:
       - echo-agent-data:/data/echo-agent
-      - ./config.yaml:/data/echo-agent/config.yaml:ro
-    environment:
-      - ECHO_AGENT_HOME=/data/echo-agent
+      - ./echo-agent.yaml:/data/echo-agent/echo-agent.yaml:ro
     restart: unless-stopped
-    mem_limit: 2g
 
 volumes:
   echo-agent-data:
 ```
 
-### 运行
+启动后可运行 `docker compose up -d`、`docker compose logs -f echo-agent`。端口只映射到宿主机回环地址；若通过域名对外提供服务，在宿主机部署反向代理并设置 `gateway.auth.allowed_hosts` 为该域名。容器内工具执行会使用容器中的文件和进程环境；需要访问项目文件时，应显式挂载相应路径，并按工具配置限制访问范围。
+
+## 反向代理
+
+Gateway 本身提供 HTTP 与 WebSocket。若需要 HTTPS、域名或代理层访问控制，使用 [Gateway 反向代理配置](../integrations/gateway/reverse-proxy.md) 中的 nginx 或 Caddy 示例。代理应转发原始 `Host` 和认证头，并支持 WebSocket 升级。健康探针的默认路径为 `/api/v1/health`。
+
+## 多实例
+
+各实例使用独立的配置文件、工作区、监听端口和服务标识。不要让多个 Agent 进程写同一工作区的 SQLite 数据库与记忆文件，也不要把当前示例直接当作共享数据库的负载均衡方案。例如，分别以前台启动两个实例：
 
 ```bash
-docker-compose up -d
-docker-compose logs -f echo-agent
+echo-agent gateway --config /srv/agent-a/echo-agent.yaml --workspace /srv/agent-a
+echo-agent gateway --config /srv/agent-b/echo-agent.yaml --workspace /srv/agent-b
 ```
 
-!!! warning "容器内工具执行"
-    容器化部署时，Agent 的工具执行（如 shell 命令）受限于容器环境。需要挂载工作目录或配置远程执行后端。
+两个配置中的 `gateway.port` 必须不同。实际生产环境还需分别规划令牌、数据备份和进程管理。
 
-!!! note "没有官方镜像，需自行构建"
-    项目未发布预构建的 Docker 镜像，仓库中也没有 Dockerfile。上面的 Dockerfile 与 compose 片段是供你复制到自己项目里的示例，不是仓库内的现成文件。
+## 相关文档
 
-    容器化部署是社区[欢迎贡献的方向](https://github.com/fuyuxiang/echo-agent/issues)之一。
-
----
-
-## 反向代理部署
-
-当需要通过 HTTPS 或域名访问 Gateway 时，推荐在前面放置反向代理。
-
-### Nginx 配置
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name echo-agent.example.com;
-
-    ssl_certificate /etc/ssl/certs/echo-agent.pem;
-    ssl_certificate_key /etc/ssl/private/echo-agent.key;
-
-    location / {
-        proxy_pass http://127.0.0.1:58123;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # WebSocket 支持（如需要）
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-
-        # 超时设置（Agent 任务可能较长）
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
-    }
-}
-```
-
-### Caddy 配置
-
-```caddyfile
-echo-agent.example.com {
-    reverse_proxy localhost:58123 {
-        # 长连接超时
-        transport http {
-            read_timeout 300s
-        }
-    }
-}
-```
-
-!!! tip "Caddy 自动 HTTPS"
-    Caddy 自动申请和续期 Let's Encrypt 证书，是最简单的 HTTPS 部署方案。
-
-### Gateway 配合配置
-
-使用反向代理时，需更新 Gateway 的 Origin 保护配置：
-
-```yaml
-gateway:
-  host: 127.0.0.1          # 仍然绑定本地
-  port: 58123
-  auth:
-    allowed_origins:
-      - "https://echo-agent.example.com"
-    allowed_hosts:
-      - "echo-agent.example.com"
-```
-
----
-
-## 多实例部署
-
-为不同用户或项目运行独立的 Echo Agent 实例：
-
-### 方案一：不同端口
-
-```yaml
-# 实例 A: ~/.echo-agent-alice/config.yaml
-gateway:
-  port: 58123
-
-# 实例 B: ~/.echo-agent-bob/config.yaml
-gateway:
-  port: 8421
-```
-
-```bash
-echo-agent -c ~/.echo-agent-alice gateway start
-echo-agent -c ~/.echo-agent-bob gateway start
-```
-
-### 方案二：Docker Compose 多实例
-
-```yaml
-version: "3.8"
-services:
-  agent-alice:
-    build: .
-    ports:
-      - "127.0.0.1:58123:58123"
-    volumes:
-      - alice-data:/data/echo-agent
-    environment:
-      - ECHO_AGENT_HOME=/data/echo-agent
-
-  agent-bob:
-    build: .
-    ports:
-      - "127.0.0.1:8421:58123"
-    volumes:
-      - bob-data:/data/echo-agent
-    environment:
-      - ECHO_AGENT_HOME=/data/echo-agent
-
-volumes:
-  alice-data:
-  bob-data:
-```
-
-!!! danger "数据隔离"
-    多实例共享同一数据目录会导致 SQLite 锁冲突和数据损坏。每个实例必须使用独立的数据目录。
-
----
-
-## 网络安全注意事项
-
-| 部署方式 | 默认绑定 | 公网暴露风险 |
-|---------|---------|-------------|
-| 直接部署 | `127.0.0.1` | 无 |
-| Docker (ports) | 取决于映射 | 注意 `0.0.0.0` 映射 |
-| 反向代理 | 代理层控制 | 需配置访问控制 |
-
---8<-- "docs/includes/warning-public-gateway.md"
+- [Gateway 认证](../integrations/gateway/authentication.md)
+- [备份与恢复](backup-restore.md)
+- [安全加固](security-hardening.md)

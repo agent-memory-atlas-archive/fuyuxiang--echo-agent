@@ -11,7 +11,7 @@
     升级到指定版本：
 
     ```bash
-    pip install echo-agent[all]==0.3.8
+    pip install "echo-agent[all]==0.3.8"
     ```
 
 === "源码升级"
@@ -31,33 +31,26 @@
 
     1. 阅读 [CHANGELOG](https://github.com/fuyuxiang/echo-agent/blob/master/CHANGELOG.md) 了解变更内容
     2. 备份数据目录
-    3. 执行数据库迁移（如需要）
+    3. 停止服务后备份完整工作区，再升级并验证配置
 
 **备份数据：**
 
 ```bash
 # 数据目录默认位置
-cp -r ~/.echo-agent ~/.echo-agent.backup.$(date +%Y%m%d)
+tar -czf "$HOME/echo-agent-backup-$(date +%Y%m%d).tar.gz" -C "$HOME" .echo-agent
 ```
 
 ---
 
-### 数据库迁移
+### 数据迁移
 
-版本升级后如果数据库 schema 有变更，需要运行迁移命令：
-
-```bash
-echo-agent migrate
-```
-
-!!! note "自动迁移提示"
-    `echo-agent run` 启动时会检测 schema 版本。如果需要迁移，会给出提示并拒绝启动，此时运行 `echo-agent migrate` 即可。
+SQLite 表结构迁移在数据库初始化时自动执行。`echo-agent migrate` 只处理 USER 记忆归属键及旧记忆分片导入，不执行数据库表结构迁移。需要迁移记忆时，先运行 `echo-agent migrate status` 和 `echo-agent migrate run --dry-run`。完整流程见[升级与数据迁移](../operations/upgrade-migrations.md)。
 
 ---
 
 ### 检查点恢复
 
-如果升级后出现问题，可以回滚到之前的检查点：
+检查点可恢复 Agent 修改过的工作区文件：
 
 ```bash
 # 查看可用的检查点
@@ -79,25 +72,23 @@ pip uninstall echo-agent
 
 ### 完全清理
 
-卸载包并删除所有数据：
+先停止并注销已安装的 Gateway 后台服务。确认已备份所需数据，再卸载包并删除默认工作区：
 
 ```bash
-# 卸载 Python 包
+echo-agent gateway stop
+echo-agent gateway uninstall
 pip uninstall echo-agent
-
-# 删除数据目录（包含配置、数据库、记忆）
 rm -rf ~/.echo-agent
-
-# 如果使用了一键安装脚本，还需删除虚拟环境
-rm -rf ~/.echo-agent/venv
 rm -f ~/.local/bin/echo-agent
 ```
+
+一键安装脚本默认将源码和虚拟环境放在 `~/.echo-agent/echo-agent/venv`；删除默认工作区时会一并删除。如果使用了自定义 `ECHO_INSTALL_DIR`，应先确认该目录内容，再单独处理。`pip uninstall` 只卸载当前 Python 环境中的包。
 
 !!! warning "数据不可恢复"
     删除 `~/.echo-agent` 目录将永久清除所有数据，包括：
 
     - 配置文件 (`config.yaml`)
-    - 对话历史和记忆数据库
+    - SQLite 数据库、会话文件与记忆文件
     - 积累的技能和进化记录
     - 定时任务配置
 
@@ -109,14 +100,7 @@ rm -f ~/.local/bin/echo-agent
 
 如果安装了 Playwright 浏览器依赖：
 
-```bash
-# 查看已安装的浏览器
-playwright install --list
-
-# 删除所有 Playwright 浏览器
-rm -rf ~/.cache/ms-playwright        # Linux
-rm -rf ~/Library/Caches/ms-playwright # macOS
-```
+Playwright 浏览器缓存可能由其他项目共用；清理前先查看当前安装版本的管理命令和缓存位置，避免影响其他项目。
 
 ---
 
@@ -138,16 +122,10 @@ rm -rf node_modules dist
 安装指定旧版本：
 
 ```bash
-pip install echo-agent[all]==0.3.6
-```
-
-若升级时执行过 `echo-agent migrate run`，用配套的回退命令撤销迁移：
-
-```bash
-echo-agent migrate rollback
+pip install "echo-agent[all]==0.3.6"
 ```
 
 !!! warning "checkpoint 不含数据库"
-    `echo-agent checkpoint` 是工作区**文件**的影子 Git 快照，其排除范围明确包含 SQLite 数据库、会话目录、记忆目录与日志目录（对活跃的 SQLite 文件做文件级快照会得到撕裂的读取结果）。因此 `checkpoint restore` 无法恢复数据库状态。
+    `echo-agent checkpoint` 是工作区**文件**的影子 Git 快照，其排除范围包含 SQLite 数据库、会话目录、记忆目录与日志目录，因此 `checkpoint restore` 无法恢复这些数据。
 
-    数据层的回退只有两条路径：`echo-agent migrate rollback`，或事先手工备份的数据库文件。降级前请先复制 `data/echo_agent.db`。
+    降级包不会逆向迁移数据库。应停止服务并恢复与旧版本对应的完整备份；`echo-agent migrate rollback` 只恢复最近的 USER 记忆文件迁移备份。参见[升级与数据迁移](../operations/upgrade-migrations.md)和[备份与恢复](../operations/backup-restore.md)。

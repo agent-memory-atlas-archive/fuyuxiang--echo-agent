@@ -14,11 +14,14 @@ channels:
     enabled: true
     homeserver: https://matrix.example.com
     user_id: "@echo-bot:example.com"
-    access_token: ${MATRIX_ACCESS_TOKEN}
+    access_token: ""
     allow_rooms:
       - "!abcdef123456:example.com"
       - "!support-room:example.com"
 ```
+
+若不把密钥写入 YAML，请在进程环境中设置 `ECHO_AGENT_CHANNELS__MATRIX__ACCESS_TOKEN`，例如 `export ECHO_AGENT_CHANNELS__MATRIX__ACCESS_TOKEN="$MATRIX_ACCESS_TOKEN"`。通用配置加载器不会展开 YAML 中的环境变量占位符。
+
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|

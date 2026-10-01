@@ -69,7 +69,7 @@ tools:
 
 每个 POST 都带规范要求的 `Accept: application/json, text/event-stream`，握手后带 `MCP-Protocol-Version`；响应为 JSON 或 SSE 均可处理（SSE 分帧兼容 `\r\n\r\n`、`\n\n`、`\r\r`）；4xx/5xx 会作为错误抛出而不是静默入队；会话被服务端判为过期（404）时重建，关闭时发 `DELETE` 显式终止。
 
-注意 `execution.networkPolicy` 默认为 `deny`，此时 HTTP 类型的 MCP 服务会被跳过；要连远程服务需显式放开。
+注意 `execution.networkPolicy` 的 schema 默认值为 `deny`，包内默认配置为 `allow`。显式设为 `deny` 时，HTTP 类型的 MCP 服务会被跳过；连接远程服务需要允许出站网络。
 
 ### OAuth
 

@@ -92,12 +92,12 @@ gateway:
 
 ### 令牌传递方式
 
-令牌通过 HTTP 请求头传递，默认请求头名称为 `X-API-Token`：
+令牌通过 HTTP 请求头传递，默认请求头名称为 `X-Echo-Agent-Token`：
 
 ```http
-GET /api/sessions HTTP/1.1
-Host: localhost:8090
-X-API-Token: tk-proj-abc123def456
+GET /api/v1/sessions HTTP/1.1
+Host: localhost:58123
+X-Echo-Agent-Token: tk-proj-abc123def456
 ```
 
 可通过配置自定义请求头名称：
@@ -105,7 +105,7 @@ X-API-Token: tk-proj-abc123def456
 ```yaml
 gateway:
   auth:
-    token_header: "X-API-Token"  # 默认值
+    token_header: "X-Echo-Agent-Token"  # 默认值
 ```
 
 !!! warning "管理操作只认请求头"
@@ -242,7 +242,7 @@ gateway:
       - "tk-proj-abc123"
     admin_tokens:                  # 管理员令牌
       - "atk-master-key"
-    token_header: "X-API-Token"   # 令牌请求头名称
+    token_header: "X-Echo-Agent-Token"   # 令牌请求头名称
     allowed_origins:               # CORS 来源白名单
       - "https://dashboard.example.com"
     allowed_hosts:                 # Host 头白名单

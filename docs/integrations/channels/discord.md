@@ -66,8 +66,8 @@ https://discord.com/api/oauth2/authorize?client_id=CLIENT_ID&permissions=2147551
 
 !!! tip
     将 Token 通过环境变量注入，避免硬编码：
-    ```yaml
-    token: "${DISCORD_BOT_TOKEN}"
+    ```bash
+    export ECHO_AGENT_CHANNELS__DISCORD__TOKEN="$DISCORD_BOT_TOKEN"
     ```
 
 ---

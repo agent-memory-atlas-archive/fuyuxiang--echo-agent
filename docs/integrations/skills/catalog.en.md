@@ -26,12 +26,9 @@ Creative content generation skills.
 | Skill | Description | Required Env Vars |
 |-------|-------------|-------------------|
 | excel-author | Create and edit Excel spreadsheets with formulas, charts, and styles | — |
-| image-gen | Generate images from text descriptions, multiple styles and sizes | `OPENAI_API_KEY` |
-| meme-gen | Generate memes based on topics or situations | `OPENAI_API_KEY` |
+| image-gen | Generate images with OpenAI, Stability AI, or Pollinations | `OPENAI_API_KEY` for OpenAI; `STABILITY_API_KEY` for Stability; no key for Pollinations |
+| meme-gen | Overlay text on templates or user-provided images with Pillow | No API key; Pillow required |
 | ppt-author | Create presentations with auto layout, images, and animations | — |
-
-!!! tip "Image generation tip"
-    Both `image-gen` and `meme-gen` automatically translate Chinese descriptions to English prompts for optimal results. Just describe what you want in any language.
 
 ---
 
@@ -41,14 +38,14 @@ Software development assistance skills.
 
 | Skill | Description | Required Env Vars |
 |-------|-------------|-------------------|
-| code-runner | Execute Python/JS/Shell code snippets in a sandbox and return results | — |
-| github-ops | Perform GitHub operations: create issues, PRs, view repo status | `GITHUB_TOKEN` |
+| code-runner | Run Python snippets with timeouts and limited pattern checks | — |
+| github-ops | Perform GitHub operations through the `gh` CLI | Requires `gh` with an authenticated account |
 | plan | Break down complex tasks into executable step-by-step plans | — |
 | skill-creator | Assist in creating new SKILL.md skill files | — |
 | workflow-chain | Chain multiple skills into automated workflows | — |
 
-!!! warning "code-runner security restrictions"
-    `code-runner` executes code in a restricted sandbox with no network access and limited filesystem access (designated temp directory only). For full execution environments, extend via the plugin system.
+!!! warning "code-runner is not a security sandbox"
+    This skill runs a Python subprocess on the host. A temporary working directory and pattern checks do not prevent access to host files or provide reliable network isolation. Do not run untrusted code with it.
 
 ---
 
@@ -70,7 +67,7 @@ Finance and investment skills.
 | Skill | Description | Required Env Vars |
 |-------|-------------|-------------------|
 | finance-tracker | Record and analyze personal income/expenses, generate reports | — |
-| stocks | Query real-time stock quotes, historical data, and technical indicators | `ALPHA_VANTAGE_KEY` |
+| stocks | Query stocks, funds, and crypto through public endpoints | No API key |
 
 ---
 
@@ -103,7 +100,7 @@ Audio and media processing skills.
 
 | Skill | Description | Required Env Vars |
 |-------|-------------|-------------------|
-| tts-voice | Convert text to natural speech, multiple voices and languages | `ELEVENLABS_API_KEY` |
+| tts-voice | Synthesize speech through Edge TTS or OpenAI TTS | Edge TTS needs no key; OpenAI uses `OPENAI_API_KEY` |
 | voice-note | Transcribe voice messages to text and organize as notes | — |
 
 ---
@@ -114,11 +111,11 @@ Daily efficiency and office automation skills.
 
 | Skill | Description | Required Env Vars |
 |-------|-------------|-------------------|
-| calendar | Manage calendar events: create, query, modify, and delete schedules | `GOOGLE_CREDENTIALS_JSON` |
+| calendar | Manage events through CalDAV or local ICS | CalDAV account credentials; no key for local ICS |
 | daily-briefing | Generate daily briefings: weather, schedule, to-dos, news digest | — |
-| email-assistant | Compose, reply to, and manage emails with templates and batch ops | `EMAIL_CREDENTIALS` |
+| email-assistant | Read and send email through Himalaya or IMAP/SMTP | Configured Himalaya account or email connection variables such as `ECHO_EMAIL_HOST` |
 | note-taking | Structured note-taking with tags, search, and export | — |
-| notion-sync | Bi-directional sync with Notion databases and pages | `NOTION_TOKEN` |
+| notion-sync | Read, create, and update Notion pages and databases | `NOTION_API_TOKEN` |
 | ocr-document | Extract text from images or PDFs, including table recognition | — |
 | reminder | Set timed reminders with recurring and conditional triggers | — |
 | summarize | Intelligent summarization of long text, web pages, and documents | — |
@@ -136,10 +133,10 @@ Information retrieval and deep research skills.
 | Skill | Description | Required Env Vars |
 |-------|-------------|-------------------|
 | arxiv | Search arXiv papers, get abstracts and PDF links | — |
-| deep-research | Conduct multi-round deep research on complex topics, produce reports | `TAVILY_API_KEY` |
+| deep-research | Combine search, extraction, and cross-checking into a cited report | No fixed API key; depends on the selected search method |
 | rss-watcher | Monitor RSS feeds, extract updates, and generate summaries | — |
 | web-extract | Extract structured data from web pages (articles, tables, lists) | — |
-| web-search | Perform web searches and return structured results | `SERPAPI_KEY` or `TAVILY_API_KEY` |
+| web-search | Search with DuckDuckGo or a self-hosted SearXNG instance | No API key; relevant service or dependency required |
 
 !!! warning "deep-research costs markedly more than the other skills"
     It runs several rounds of search and page fetching, so a single invocation can consume tens of times the tokens of an ordinary exchange. The skill itself neither estimates usage nor imposes a cap.
@@ -156,28 +153,14 @@ General-purpose tool skills.
 |-------|-------------|-------------------|
 | calculator | Math calculations, unit conversions, and formula solving | — |
 | file-convert | File format conversion: PDF↔Word, image formats, audio/video transcoding | — |
-| maps-poi | Location search, route planning, and POI queries | `AMAP_API_KEY` or `GOOGLE_MAPS_KEY` |
+| maps-poi | Query places and routes with OpenStreetMap/Nominatim and OSRM | No key by default; optional `AMAP_API_KEY` |
 | text-tools | Text processing toolkit: translation, formatting, regex replace, encoding | — |
 
 ---
 
-## Environment Variables Summary
+## Credentials and runtime requirements
 
-All skills requiring environment variables at a glance:
-
-| Env Var | Used By | How to Obtain |
-|---------|---------|---------------|
-| `OPENAI_API_KEY` | image-gen, meme-gen | [OpenAI Platform](https://platform.openai.com/) |
-| `GITHUB_TOKEN` | github-ops | [GitHub Settings → Tokens](https://github.com/settings/tokens) |
-| `ALPHA_VANTAGE_KEY` | stocks | [Alpha Vantage](https://www.alphavantage.co/support/) |
-| `ELEVENLABS_API_KEY` | tts-voice | [ElevenLabs](https://elevenlabs.io/) |
-| `GOOGLE_CREDENTIALS_JSON` | calendar | [Google Cloud Console](https://console.cloud.google.com/) |
-| `EMAIL_CREDENTIALS` | email-assistant | From your email provider |
-| `NOTION_TOKEN` | notion-sync | [Notion Integrations](https://www.notion.so/my-integrations) |
-| `TAVILY_API_KEY` | deep-research, web-search | [Tavily](https://tavily.com/) |
-| `SERPAPI_KEY` | web-search | [SerpAPI](https://serpapi.com/) |
-| `AMAP_API_KEY` | maps-poi | [Amap Open Platform](https://lbs.amap.com/) |
-| `GOOGLE_MAPS_KEY` | maps-poi | [Google Maps Platform](https://developers.google.com/maps) |
+The table distinguishes required account credentials from optional provider keys. `image-gen` uses `OPENAI_API_KEY` or `STABILITY_API_KEY` for those respective paths; Pollinations needs no key. `tts-voice` needs no key for Edge TTS and uses `OPENAI_API_KEY` for its OpenAI path. `notion-sync` uses `NOTION_API_TOKEN`; `github-ops` requires an authenticated `gh` CLI. CalDAV calendar access needs account credentials, while local ICS needs no network key. See each skill's `SKILL.md` for installation commands and limits.
 
 ## Related Links
 

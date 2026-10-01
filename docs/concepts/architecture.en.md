@@ -212,6 +212,6 @@ graph TB
 | Event-driven | All I/O normalized to InboundEvent / OutboundEvent, decoupled via EventBus |
 | Channel-agnostic core | AgentLoop is fully decoupled from channel implementations; same logic handles messages from any source |
 | Pipeline stages | Processing pipeline divided into ContextStage -> InferenceStage -> ResponseStage |
-| Security-by-default | ToolPolicy filtering, ShellGuard sandboxing, ApprovalGate human-in-the-loop review |
+| Default security controls | ToolPolicy admission, ShellGuard command-policy checks, and ApprovalGate review; command checks do not provide OS-level isolation |
 | Memory-augmented | 4-tier memory (working / episodic / semantic / procedural) injected into every context build |
 | Self-evolving | Trajectory capture and evolution engine enable autonomous skill improvement |

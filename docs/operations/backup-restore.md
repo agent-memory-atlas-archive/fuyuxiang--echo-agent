@@ -1,213 +1,58 @@
 # 备份与恢复
 
-Echo Agent 的所有持久化数据存储在文件系统中，备份策略围绕数据目录展开。
+默认工作区是 `~/.echo-agent`，但 `workspace`、`-w/--workspace` 和各 `storage.*` 路径可以改变实际存储位置。先运行 `echo-agent config dump` 确认部署路径。完整备份至少覆盖配置、SQLite 数据库、`storage.sessions_dir`、`storage.memory_dir` 和需要保留的知识文档与技能。`checkpoint.store_path` 默认 `~/.echo-agent/checkpoints/store`，也可按需一并备份。
 
----
+## 停机完整备份
 
-## 数据目录结构
-
-```
-~/.echo-agent/                   # 全局 Home
-├── config.yaml                  # 配置（必须备份）
-├── data/
-│   ├── echo_agent.db            # SQLite 主数据库（必须备份）
-│   ├── memory/                  # 长期记忆存储（必须备份）
-│   ├── knowledge/               # 知识库索引（建议备份）
-│   ├── spill/                   # 工具输出溢写（可选备份）
-│   ├── logs/                    # 运行日志（可选备份）
-│   └── checkpoints/             # 文件检查点的影子 Git 仓库（可选备份）
-└── env                          # 环境变量（如有则备份）
-```
-
-### 备份优先级
-
-| 路径 | 优先级 | 说明 |
-|------|--------|------|
-| `config.yaml` | 必须 | 配置丢失需重建 |
-| `data/echo_agent.db` | 必须 | 会话、任务、元数据 |
-| `data/memory/` | 必须 | Agent 长期记忆，丢失不可恢复 |
-| `data/knowledge/` | 建议 | 知识库索引，可从源文档重建 |
-| `data/checkpoints/` | 可选 | 工作区文件的历史版本，不含数据库与记忆 |
-| `data/spill/` | 可选 | 大输出临时存储，通常可丢弃 |
-| `data/logs/` | 可选 | 历史日志，用于审计 |
-
----
-
-## 备份方法
-
-### 方法一：目录整体备份
-
-最简单可靠的方式，停止服务后复制整个目录：
+先停止写入。若安装了用户级后台服务：
 
 ```bash
-# 停止服务（避免备份期间写入）
 echo-agent gateway stop
-
-# 整体备份
-tar -czf echo-agent-backup-$(date +%Y%m%d).tar.gz ~/.echo-agent/
-
-# 重新启动
+tar -czf "$HOME/echo-agent-backup-$(date +%Y%m%d).tar.gz" -C "$HOME" .echo-agent
 echo-agent gateway start
 ```
 
-!!! warning "热备份风险"
-    在 Gateway 运行时直接复制目录可能导致 SQLite 数据库文件不一致。如果无法停止服务，请使用 SQLite 在线备份方法。
+如果运行的是前台 `echo-agent run` 或 `echo-agent gateway`，先停止该进程；若使用自定义工作区，应将 `-C` 和目录名改为实际位置。不要直接复制正在写入的 SQLite 数据库文件。备份文件本身可能包含令牌、对话和记忆，应限制访问权限。
 
-### 方法二：SQLite 在线备份
+## 运行中备份 SQLite
 
-无需停止服务，利用 SQLite 的 `.backup` 命令进行一致性备份：
+SQLite 命令行的 `.backup` 可生成一致的数据库副本：
 
 ```bash
-# SQLite 在线备份（服务运行时安全）
-sqlite3 ~/.echo-agent/data/echo_agent.db ".backup /backup/echo_agent.db"
-
-# 配合文件备份
-rsync -a --exclude='data/echo_agent.db' ~/.echo-agent/ /backup/echo-agent/
-cp /backup/echo_agent.db /backup/echo-agent/data/
+sqlite3 "$HOME/.echo-agent/data/echo_agent.db"   ".backup '$HOME/echo-agent-sqlite-backup.db'"
 ```
 
-### 方法三：checkpoint 命令
+这只备份数据库；记忆、会话、配置及其他文件仍需另行备份。它们可能与数据库副本处于不同时间点，因此跨文件一致的完整备份仍以停机备份为准。
 
-Echo Agent 内置的检查点机制，可在运行时创建一致性快照：
+## 从完整备份恢复
 
-```bash
-# 查看已有检查点
-echo-agent checkpoint list
-
-# 查看检查点详情
-echo-agent checkpoint show <checkpoint-id>
-
-# 手动触发检查点（运行时创建）
-# 通常由系统在关键操作前后自动创建
-```
-
----
-
-## 定时备份脚本
-
-### Cron 定时备份
+停止服务或前台进程，并保留当前工作区副本，再将与目标程序版本匹配的归档恢复到原位置。例如：
 
 ```bash
-#!/bin/bash
-# /usr/local/bin/echo-agent-backup.sh
-
-BACKUP_DIR="/backup/echo-agent"
-RETENTION_DAYS=30
-DATE=$(date +%Y%m%d_%H%M%S)
-
-mkdir -p "$BACKUP_DIR"
-
-# SQLite 在线备份
-sqlite3 ~/.echo-agent/data/echo_agent.db \
-  ".backup $BACKUP_DIR/echo_agent_$DATE.db"
-
-# 配置和记忆备份
-tar -czf "$BACKUP_DIR/memory_$DATE.tar.gz" \
-  ~/.echo-agent/config.yaml \
-  ~/.echo-agent/data/memory/ \
-  ~/.echo-agent/data/knowledge/ \
-  ~/.echo-agent/data/checkpoints/
-
-# 清理过期备份
-find "$BACKUP_DIR" -type f -mtime +$RETENTION_DAYS -delete
-
-echo "Backup completed: $DATE"
-```
-
-```bash
-# 添加 cron 任务（每日凌晨 3 点）
-crontab -e
-# 0 3 * * * /usr/local/bin/echo-agent-backup.sh >> /var/log/echo-agent-backup.log 2>&1
-```
-
----
-
-## 恢复流程
-
-### 从完整备份恢复
-
-```bash
-# 1. 停止服务
 echo-agent gateway stop
-
-# 2. 备份当前数据（防止误操作）
-mv ~/.echo-agent ~/.echo-agent.old
-
-# 3. 解压备份
-tar -xzf echo-agent-backup-20240101.tar.gz -C ~/
-
-# 4. 验证数据完整性
-sqlite3 ~/.echo-agent/data/echo_agent.db "PRAGMA integrity_check;"
-# ok
-
-# 5. 重启服务
+mv "$HOME/.echo-agent" "$HOME/.echo-agent.before-restore"
+tar -xzf "$HOME/echo-agent-backup-20261001.tar.gz" -C "$HOME"
+sqlite3 "$HOME/.echo-agent/data/echo_agent.db" "PRAGMA integrity_check;"
+echo-agent config validate
 echo-agent gateway start
-
-# 6. 验证恢复成功
-echo-agent status
+echo-agent gateway status
 ```
 
-### 从检查点恢复
+路径和文件名均应替换为实际备份。运行前确认归档来源及内容；如果没有安装后台服务，就停止并重新启动对应的前台进程。
+
+## 从 SQLite 备份恢复 { #restore-sqlite-backup }
+
+只恢复数据库时，应确保它与保留的其他数据兼容：
 
 ```bash
-# 查看可用检查点
-echo-agent checkpoint list
-
-# 恢复到指定检查点
-echo-agent checkpoint restore <checkpoint-id>
-
-# 验证状态
-echo-agent status
-```
-
-!!! warning "检查点恢复的范围"
-    检查点是工作区**文件**的影子 Git 快照，用于回退 Agent 对文件的改动。它的排除范围包含 SQLite 数据库、会话目录、记忆目录与日志目录——对活跃的 SQLite 文件做文件级快照会读到撕裂状态，因此这些数据不在检查点内。
-
-    这意味着 `checkpoint restore` 不恢复会话与记忆。数据层的恢复走下一节的 SQLite 备份，配置文件也需从备份中单独恢复。
-
-### 从 SQLite 备份恢复 { #restore-sqlite-backup }
-
-```bash
-# 停止服务
 echo-agent gateway stop
-
-# 替换数据库文件
-cp /backup/echo_agent_20240101.db ~/.echo-agent/data/echo_agent.db
-
-# 重启
+cp "$HOME/echo-agent-sqlite-backup.db" "$HOME/.echo-agent/data/echo_agent.db"
+sqlite3 "$HOME/.echo-agent/data/echo_agent.db" "PRAGMA integrity_check;"
 echo-agent gateway start
 ```
 
----
+覆盖数据库前应保留现有文件副本。会话、记忆和配置不在这个数据库副本中时，需要从相同时间点的其他备份恢复。
 
-## 检查点管理
+## 检查点范围
 
-```bash
-# 列出所有检查点
-echo-agent checkpoint list
-
-# 查看详情（包含时间、大小、关联的操作）
-echo-agent checkpoint show <id>
-
-# 恢复
-echo-agent checkpoint restore <id>
-
-# 清理旧检查点（释放磁盘空间）
-echo-agent checkpoint prune
-```
-
-!!! tip "检查点 vs 备份"
-    检查点是轻量级运行状态快照，适合快速回滚最近的变更。完整备份适合灾难恢复和跨机器迁移。两者配合使用效果最佳。
-
----
-
-## 灾难恢复清单
-
-1. **停止服务** — `echo-agent gateway stop`
-2. **评估损失** — 确认哪些数据受损
-3. **选择恢复源** — 最近的备份或检查点
-4. **执行恢复** — 按上述流程操作
-5. **验证完整性** — `sqlite3 ... "PRAGMA integrity_check;"`
-6. **验证功能** — `echo-agent status` 并执行测试对话
-7. **重启服务** — `echo-agent gateway start`
-8. **补充备份** — 恢复后立即创建新备份
+`echo-agent checkpoint list`、`show`、`restore` 和 `prune` 操作影子 Git 工作区文件快照。快照排除数据库、会话、记忆和日志，不能代替完整备份，也不能回退 SQLite 表结构。详见[文件系统布局](../reference/filesystem-layout.md)与[升级与数据迁移](upgrade-migrations.md)。

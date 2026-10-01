@@ -4,12 +4,12 @@
 
 ## 四种执行器
 
-`execution.default_executor` 选择执行器，取值四种，默认 `sandbox`：
+`execution.default_executor` 在 `tools.exec.host: auto` 时选择执行器。schema 默认值为 `sandbox`，但包内默认配置将其覆盖为 `local`；执行工具当前另由默认的 `tools.exec.host: sandbox` 选用目录型执行器：
 
 | 取值 | 隔离方式 | 运行位置 | 适用场景 |
 |------|----------|----------|----------|
 | `local` | 无额外隔离 | 本机，工作区内 | 完全信任的本地开发 |
-| `sandbox` | 独立沙箱目录（默认） | 本机 `sandbox_root` 下 | 默认选择，兼顾可用性与隔离 |
+| `sandbox` | 独立工作目录，不提供 OS 级隔离 | 本机 `sandbox_root` 下 | 需要临时工作副本的受信任命令 |
 | `container` | 容器 | 本机容器运行时 | 需要强隔离或固定运行环境 |
 | `remote` | SSH | 远程主机 | 算力或环境在别处 |
 
@@ -30,8 +30,8 @@ execution:
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `default_executor` | `sandbox` | 执行器类型 |
-| `network_policy` | `deny` | 出站网络策略：`allow` / `deny` / `restricted` |
+| `default_executor` | `local`（生效值；schema 为 `sandbox`） | `tools.exec.host: auto` 时的执行器类型 |
+| `network_policy` | `allow`（生效值；schema 为 `deny`） | 出站网络策略：`allow` / `deny` / `restricted` |
 | `sandbox_root` | `/tmp/echo-agent-sandbox` | `sandbox` 执行器的根目录 |
 | `container_image` | `''` | `container` 执行器使用的镜像 |
 | `remote_host` | `''` | `remote` 执行器的目标主机 |
@@ -41,7 +41,7 @@ execution:
 | `remote_connect_timeout` | `10` | SSH 连接超时（秒） |
 | `max_background_tasks` | `64` | 后台任务并发上限 |
 
-`network_policy` 会传递给所有执行器。它默认为 `deny`，此时 `web_fetch`、`web_search` 以及任何带 `network.outbound` 能力的工具都不会暴露给模型，详见[安全档位矩阵](../reference/security-profile-matrix.md)。
+`network_policy` 会传递给执行器。包内默认配置将其设为 `allow`；显式设为 `deny` 时，`web_fetch`、`web_search` 等带出站网络能力的工具不会注册。命令执行器对网络命令的检查是策略检查，不是操作系统网络隔离，详见[安全档位矩阵](../reference/security-profile-matrix.md)。
 
 ## local
 
@@ -54,7 +54,7 @@ execution:
 
 ## sandbox
 
-默认执行器。在 `sandbox_root` 下建立独立目录执行，与工作区隔离。
+在 `sandbox_root` 下建立独立目录，并将工作区内容复制到其中执行。进程仍在宿主机上运行，可以通过绝对路径访问其权限允许的宿主文件；它不是不受信任代码的安全边界。
 
 ```yaml
 execution:
@@ -96,7 +96,7 @@ execution:
 
 ## 按工具覆盖执行器
 
-`tools.exec` 有独立的 `host` 字段，可为 `exec` 工具单独指定执行器，覆盖 `default_executor`：
+`tools.exec` 有独立的 `host` 字段，默认 `sandbox`。注册时创建的同一执行器由 `exec`、`execute_code` 和 `process` 共用；设为 `auto` 才使用 `execution.default_executor`：
 
 ```yaml
 execution:
@@ -104,7 +104,7 @@ execution:
 
 tools:
   exec:
-    host: container        # 只有 exec 工具走容器
+    host: container        # 三种执行工具共用容器执行器
 ```
 
 `tools.exec` 的其余字段用于约束命令本身：
@@ -139,14 +139,14 @@ tools:
 
 | 维度 | local | sandbox | container | remote |
 |------|:-----:|:-------:|:---------:|:------:|
-| 隔离强度 | 无 | 中 | 强 | 取决于远端 |
+| 隔离强度 | 无 | 仅工作目录分离 | 取决于容器配置 | 取决于远端 |
 | 额外依赖 | 无 | 无 | 容器运行时 | SSH 可达 + 密钥 |
 | 启动开销 | 最低 | 低 | 中 | 中 |
-| 可访问本机工作区 | 是 | 否 | 否 | 否 |
+| 可访问本机工作区 | 是 | 有工作区副本，也可能通过绝对路径访问原目录 | 取决于挂载 | 取决于远端 |
 
 ## 安全建议
 
-- 保持 `network_policy: deny`，确有出站需求时再放开，并优先考虑 `restricted`。
+- 需要拒绝出站工具时，显式设置 `network_policy: deny`；不要把命令模式检查当成网络命名空间隔离。
 - 不要为了省事切到 `local`：它没有隔离，模型生成的命令直接作用于工作区。
 - `tools.exec.security` 保持 `allowlist`，用 `allowed_commands` 精确列出所需命令，而非放开全部再用 `blocked_commands` 排除 —— 黑名单容易被绕过。
 - 使用 `remote` 时把 `remote_strict_host_key` 设为 `yes`。

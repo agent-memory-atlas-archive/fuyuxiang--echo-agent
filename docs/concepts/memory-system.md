@@ -214,7 +214,7 @@ effective_importance = importance * (0.5 ** (days_since_access / half_life))
 
 ### 衰减行为
 
-- **base_half_life**：基础半衰期，由系统配置决定（默认值待确认）
+- **base_half_life**：基础半衰期，`memory.importance_decay_days` 默认 30 天
 - 每次访问（检索命中）触发 `access_count += 1` 和 `last_accessed` 更新
 - 访问相当于"复习"，延长半衰期
 - effective_importance 降至 archive threshold 以下时，条目迁移至 ARCHIVAL 层
@@ -395,4 +395,3 @@ Consolidation 是记忆系统的"睡眠期"处理流程，类似人类睡眠时�
 - [架构总览](architecture.md)
 - [工作区与会话身份](workspace-session-identity.md)
 - [事件投递](events-delivery.md)
-

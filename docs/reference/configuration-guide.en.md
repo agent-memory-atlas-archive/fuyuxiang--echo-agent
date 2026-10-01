@@ -87,7 +87,7 @@ gateway:
   port: 58123
 ```
 
-**execution** — execution backends. `default_executor` defaults to `sandbox`; `network_policy` defaults to `deny`, and must be `allow` or `restricted` for outbound access.
+**execution** — execution backends. The schema defaults for `default_executor` and `network_policy` are `sandbox` and `deny`, but the packaged default configuration overrides them to `local` and `allow`. Execution tools separately use `tools.exec.host`, which defaults to `sandbox`.
 
 **observability** — logging and tracing. `log_level` defaults to `INFO`; `trace_enabled` and `otel_enabled` are on by default; nothing is exported while `otel_endpoint` is empty.
 

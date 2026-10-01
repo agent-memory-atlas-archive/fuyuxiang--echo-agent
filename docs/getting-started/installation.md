@@ -5,20 +5,17 @@
 | 项目 | 最低要求 | 推荐 |
 |------|----------|------|
 | Python | 3.11 | 3.12 |
-| 操作系统 | Linux / macOS / Windows | Ubuntu 22.04+ / macOS 13+ |
-| 内存 | 512 MB | 2 GB+ |
-| 磁盘 | 200 MB | 1 GB+（含向量索引） |
+| 操作系统 | 见下表 | CI 在 Ubuntu 上运行 |
+| 内存 | 依赖模型与工作负载 | 根据部署压测确定 |
+| 磁盘 | 依赖可选组件与数据量 | 根据部署容量规划 |
 
 **操作系统支持矩阵：**
 
 | 操作系统 | 状态 | 说明 |
 |----------|------|------|
-| Ubuntu 22.04+ | :white_check_mark: 完全支持 | 推荐生产环境 |
-| Debian 12+ | :white_check_mark: 完全支持 | |
-| macOS 13+ (ARM/x86) | :white_check_mark: 完全支持 | |
-| Windows + WSL2 | :white_check_mark: 完全支持 | 推荐 Windows 用户使用 |
-| Windows 原生 | :warning: 基本支持 | 部分功能受限，见下文 |
-| Alpine Linux | :warning: 基本支持 | 需手动安装编译依赖 |
+| Ubuntu | CI 覆盖 | 使用 Python 3.11 和 3.12 运行测试 |
+| Debian / macOS / Windows + WSL2 | 需部署验证 | 安装条件满足，但不在当前 CI 操作系统矩阵内 |
+| Windows 原生 / Alpine Linux | 需逐项验证 | 外部命令、进程工具或二进制依赖可能存在平台差异 |
 
 ---
 
@@ -26,10 +23,10 @@
 
 === "pip（推荐）"
 
-    安装完整版（包含所有模型提供商和功能）：
+    安装包内预列的常用可选依赖集合（各 extra 的准确范围见 `pyproject.toml`）：
 
     ```bash
-    pip install echo-agent[all]
+    pip install "echo-agent[all]"
     ```
 
     或仅安装核心 + 指定提供商：
@@ -39,13 +36,13 @@
     pip install echo-agent
 
     # 按需添加模型提供商
-    pip install echo-agent[openai]
-    pip install echo-agent[anthropic]
-    pip install echo-agent[gemini]
-    pip install echo-agent[bedrock]
+    pip install "echo-agent[openai]"
+    pip install "echo-agent[anthropic]"
+    pip install "echo-agent[gemini]"
+    pip install "echo-agent[bedrock]"
 
     # 组合安装
-    pip install echo-agent[openai,anthropic,vector,browser]
+    pip install "echo-agent[openai,anthropic,vector,browser]"
     ```
 
 === "源码安装"
@@ -70,12 +67,12 @@
     curl -fsSL https://raw.githubusercontent.com/fuyuxiang/echo-agent/master/scripts/install.sh | bash
     ```
 
-    脚本会自动检测系统环境，安装 Python（如需要）并通过 pip 安装 echo-agent[all]。
+    脚本会检测环境，在需要时准备 Python 和 `uv`，并在源码目录的虚拟环境中安装项目及所选依赖。
 
     !!! note "脚本行为"
-        - 检测并安装 Python 3.11+（通过系统包管理器）
-        - 创建虚拟环境 `~/.echo-agent/venv`
-        - 安装 `echo-agent[all]` 到虚拟环境
+        - 检测 Python 3.11+，按平台提供安装或选择流程
+        - 默认将源码安装到 `~/.echo-agent/echo-agent`，虚拟环境在其 `venv/` 下；可用 `ECHO_INSTALL_DIR` 改写
+        - 使用 `uv` 将项目安装到虚拟环境；选用的 extra 取决于安装流程
         - 将 `echo-agent` 命令链接到 `~/.local/bin`
 
 ---
@@ -98,7 +95,7 @@
 | `tokenizers` | Token 计数 | tiktoken |
 | `otel` | OpenTelemetry 追踪 | opentelemetry-* |
 | `skills` | 内置技能依赖 | duckduckgo_search, trafilatura 等 |
-| `all` | 完整安装 | 以上全部 |
+| `all` | 包内预列的常用可选依赖集合 | 具体列表以 `pyproject.toml` 为准，不自动包含每个独立 extra |
 
 ---
 
@@ -107,7 +104,7 @@
 !!! warning "Windows 原生限制"
     Windows 原生安装存在以下已知限制：
 
-    - `faiss-cpu` 不提供 Windows 官方 wheel，需从非官方源安装或使用 conda
+    - 部分二进制依赖在 Windows 原生环境下可能缺少可用的 wheel，应先验证目标 Python 版本与平台
     - 信号处理（graceful shutdown）行为与 Unix 不同
     - 部分技能依赖的命令行工具（如 `tesseract`）需单独安装
     - 建议优先使用 WSL2
@@ -119,10 +116,9 @@
     python --version
 
     # 最小安装（不含 faiss-cpu）
-    pip install echo-agent[openai,anthropic]
+    pip install "echo-agent[openai,anthropic]"
 
-    # 完整安装
-    pip install echo-agent[all]
+    # 其他功能按所需 extra 单独安装并验证
     ```
 
 !!! note "faiss 与 fastembed 是两件事"
@@ -134,7 +130,7 @@
 
 ## 前端 Dashboard 构建
 
-内置 Dashboard 已打包在 `echo-agent[all]` 的 wheel 中。如果你从源码安装并需要 Dashboard：
+正式发布流程构建的 wheel 包含 Dashboard 产物；是否安装 `[all]` extra 不决定前端产物是否随包提供。如果从源码安装并需要 Dashboard：
 
 ```bash
 # 安装 Node.js 依赖
@@ -184,10 +180,10 @@ echo-agent --version
 echo-agent status
 
 # 运行安装检查
-echo-agent deps
+echo-agent deps status
 ```
 
-`echo-agent deps` 会检查所有可选依赖的安装状态，并报告缺失项。
+`echo-agent deps status` 会检查依赖管理器登记的可选功能，并报告缺失项；未登记的其他 extra 仍需按 `pyproject.toml` 自行确认。
 
 !!! tip "安装成功标志"
     看到版本号输出即表示安装成功。接下来请阅读 [快速上手](quickstart.md) 完成首次配置。

@@ -1,219 +1,45 @@
 # 仓库地图
 
-Echo Agent 采用模块化单仓架构，后端为 Python 包 `echo_agent/`，前端为独立 SPA `web/`。
+以下路径以当前仓库为准。后端为 `echo_agent/` Python 包，Dashboard 源码在 `web/`，内置技能在 `skills/`。
 
-## 顶层结构
+| 路径 | 职责 |
+|---|---|
+| `echo_agent/app.py` | 启动与停止顺序、配置和子系统装配 |
+| `echo_agent/__main__.py` | CLI 参数解析与主命令分发 |
+| `echo_agent/agent/loop.py` | Agent 主循环 |
+| `echo_agent/agent/pipeline/` | 推理与工具调用阶段 |
+| `echo_agent/agent/tools/` | 内置工具实现和注册 |
+| `echo_agent/agent/executors/` | 本地、工作目录副本、容器或远程执行后端 |
+| `echo_agent/agent/planning/` | 任务规划 |
+| `echo_agent/agent/multi_agent/` | 多 Agent 协作 |
+| `echo_agent/tools/` | 供扩展使用的工具公共入口 |
+| `echo_agent/models/` | 模型路由、凭证池与 Provider 抽象 |
+| `echo_agent/models/providers/` | 模型供应商实现 |
+| `echo_agent/channels/` | 消息通道适配器及管理器 |
+| `echo_agent/memory/` | 记忆存储、检索与遗忘策略 |
+| `echo_agent/knowledge/` | 文档抽取、索引及向量存储 |
+| `echo_agent/gateway/server.py` | aiohttp Gateway 和核心路由 |
+| `echo_agent/gateway/api/` | 管理 API 处理器及路由注册 |
+| `echo_agent/gateway/auth.py` | API 令牌和配对授权 |
+| `echo_agent/config/schema.py` | Pydantic 配置模型与 schema 默认值 |
+| `echo_agent/config/default.yaml` | 包内配置覆盖值 |
+| `echo_agent/config/loader.py` | 配置文件、环境变量与覆盖值合并 |
+| `echo_agent/config/docgen.py` | 配置参考生成 |
+| `echo_agent/storage/sqlite.py` | SQLite 连接与自动表结构迁移 |
+| `echo_agent/checkpoint/` | 影子 Git 工作区文件检查点 |
+| `echo_agent/cli/` | 终端客户端、后台服务管理与 CLI 子命令 |
+| `echo_agent/plugins/` | 插件发现、清单准入与生命周期 |
+| `echo_agent/mcp/` | MCP 客户端 |
+| `echo_agent/observability/` | 内部轨迹、日志缓冲与可选 OpenTelemetry |
+| `echo_agent/skills/` | 技能加载与运行时管理 |
+| `echo_agent/tasks/` | 任务管理 |
+| `echo_agent/artifacts/` | 用户产物 |
+| `web/src/` | Dashboard React 前端源码 |
+| `skills/` | 按领域组织的内置 SKILL.md 文件与脚本 |
+| `tests/` | pytest 测试 |
+| `docs/` | MkDocs 文档 |
+| `scripts/` | 安装、构建与发布脚本 |
 
-```
-echo-agent/
-├── echo_agent/          # Python 主包
-├── web/                 # Dashboard 前端（React + Vite）
-├── skills/              # 内置 Skill 集合
-├── scripts/             # 安装/发布脚本
-├── tests/               # pytest 测试套件
-├── docs/                # MkDocs 文档源
-├── pyproject.toml       # 构建配置、依赖、工具配置
-└── .github/workflows/   # CI（lint、test、security、dashboard、docs、package）
-```
+## 关键关系
 
-## 核心子系统
-
-### Agent 核心 — `echo_agent/agent/`
-
-Agent 主循环、工具执行、规划、多 Agent 协作。
-
-Tool 扩展契约的稳定公开入口是 `echo_agent.tools`；`echo_agent/tools/base.py`
-是其实现模块，Agent 目录下的 `tools/base.py` 仅保留为旧导入路径的兼容 shim。
-
-```
-agent/
-├── loop.py              # AgentLoop — 核心推理-执行循环
-├── planning/            # 任务规划与分解
-├── multi_agent/         # 多 Agent 协作（delegate/spawn）
-├── tools/               # 工具实现（shell、filesystem、search 等）
-│   ├── base.py          # 旧导入路径的向后兼容 shim
-│   ├── registry.py      # ToolRegistry — 注册、权限检查、审计
-│   ├── shell.py         # ShellTool (exec) — 命令执行
-│   ├── filesystem.py    # 文件读写
-│   ├── search.py        # 搜索工具
-│   ├── memory.py        # 记忆操作工具
-│   ├── knowledge.py     # 知识库查询工具
-│   ├── skill_run.py     # Skill 调用
-│   ├── delegate.py      # 多 Agent 委派
-│   └── ...              # 30+ 工具实现
-├── executors/           # 执行器抽象（进程、容器）
-└── proc_lifecycle.py    # 子进程生命周期管理
-```
-
-### 模型层 — `echo_agent/models/`
-
-多 Provider 抽象、路由、速率控制、凭证池。
-
-```
-models/
-├── provider.py          # LLMProvider 抽象基类、LLMResponse、ToolCallRequest
-├── providers/
-│   ├── __init__.py      # Provider 工厂 + _PROVIDER_MAP 注册表
-│   ├── openai_provider.py
-│   ├── anthropic_provider.py
-│   ├── bedrock_provider.py
-│   ├── gemini_provider.py
-│   └── openrouter_provider.py
-├── router.py            # 模型路由（任务→Provider 映射）
-├── rate_limiter.py      # 令牌桶限流
-└── credential_pool.py   # 多 Key 轮转
-```
-
-### 通道层 — `echo_agent/channels/`
-
-14 个消息通道适配器 + 管理器。
-
-```
-channels/
-├── base.py              # BaseChannel 抽象基类
-├── manager.py           # ChannelManager — 启停、路由、投递
-├── cli.py               # CLI 通道
-├── telegram.py          # Telegram Bot
-├── discord.py           # Discord Bot
-├── slack.py             # Slack App
-├── weixin.py            # 微信公众号/企业微信
-├── wecom.py             # 企业微信自建应用
-├── feishu.py            # 飞书
-├── dingtalk.py          # 钉钉
-├── email.py             # 邮件通道
-├── webhook.py           # 通用 Webhook
-├── cron.py              # 定时触发
-├── matrix.py            # Matrix 协议
-├── qqbot.py             # QQ Bot
-└── whatsapp.py          # WhatsApp Business
-```
-
-### 记忆系统 — `echo_agent/memory/`
-
-四层记忆架构：工作记忆、短期、长期、归档。
-
-```
-memory/
-├── manager.py           # MemoryManager — 统一接口
-├── tiers/               # 四层存储实现
-├── retrieval/           # 检索策略（向量、关键词、混合）
-└── consolidation/       # 记忆整合与衰减
-```
-
-### 知识库 — `echo_agent/knowledge/`
-
-文档提取、向量化存储、语义检索。
-
-```
-knowledge/
-├── manager.py           # KnowledgeManager
-├── extractors/          # 文档解析器（PDF、Word、Excel、PPT）
-└── vector_store/        # 向量存储（FAISS、本地嵌入）
-```
-
-### 网关 — `echo_agent/gateway/`
-
-HTTP/WebSocket 服务器，Dashboard API。
-
-```
-gateway/
-├── server.py            # aiohttp 应用启动
-├── auth.py              # JWT 认证
-├── api/                 # REST API 模块
-│   ├── sessions.py
-│   ├── analytics.py
-│   ├── config.py
-│   └── ...
-├── ws.py                # WebSocket 实时推送
-└── static/              # 构建后的 Dashboard 静态文件
-```
-
-### 配置 — `echo_agent/config/`
-
-Pydantic-settings 配置体系，支持 YAML/env/CLI 覆盖。
-
-```
-config/
-├── schema.py            # 配置 Pydantic 模型（ProviderConfig 等）
-├── loader.py            # 配置加载与合并
-├── migration.py         # 版本迁移
-└── docgen.py            # 自动生成配置参考文档
-```
-
-### 插件 — `echo_agent/plugins/`
-
-插件发现、加载、manifest 权限预检、生命周期钩子。
-
-```
-plugins/
-├── manifest.py          # PluginManifest（plugin.yaml 解析）
-├── loader.py            # 插件发现与加载
-├── manager.py           # PluginManager — 激活/停用
-├── hooks.py             # HookRegistry — 生命周期钩子分发
-├── sandbox.py           # manifest 权限声明与注册准入（非进程隔离）
-├── context.py           # 插件执行上下文
-└── errors.py            # 插件错误类型
-```
-
-### 其他子系统
-
-| 目录 | 职责 |
-|------|------|
-| `a2a/` | Agent-to-Agent 协议 |
-| `bus/` | 事件总线（InboundEvent/OutboundEvent） |
-| `checkpoint/` | 文件检查点持久化 |
-| `cli/` | CLI 入口、inline scrollback renderer、TUI（Textual） |
-| `cost/` | 成本追踪与预算控制 |
-| `dependencies/` | 依赖管理 |
-| `evaluation/` | 评估框架（数据集、指标、Runner） |
-| `evolution/` | 自我演进机制 |
-| `mcp/` | MCP 客户端协议 |
-| `media/` | 媒体处理（图片、音频） |
-| `observability/` | 日志（loguru）、监控、OpenTelemetry |
-| `permissions/` | 权限系统 |
-| `scheduler/` | 定时任务调度 |
-| `security/` | 安全策略、工具权限、命令过滤 |
-| `session/` | 会话管理 |
-| `skills/` | Skill Manager |
-| `spill/` | 长输出溢出机制 |
-| `storage/` | SQLite + 文件存储 |
-| `tasks/` | 任务/工作流管理 |
-| `utils/` | 通用工具函数 |
-| `validation/` | 输入验证 |
-
-## 前端结构 — `web/`
-
-```
-web/
-├── src/
-│   ├── main.tsx         # 入口
-│   ├── App.tsx          # 路由配置
-│   ├── pages/           # 页面组件（Overview、Sessions、Channels 等）
-│   ├── components/      # 通用组件
-│   ├── stores/          # Zustand 状态管理
-│   ├── hooks/           # 自定义 React Hooks
-│   ├── i18n/            # 国际化（i18next）
-│   ├── lib/             # 工具库
-│   └── test/            # 测试工具
-├── package.json         # 依赖声明
-├── vite.config.ts       # Vite 配置
-└── tailwind.config.ts   # Tailwind CSS 配置
-```
-
-## Skills 目录 — `skills/`
-
-按领域分类的内置 Skill 集合：
-
-```
-skills/
-├── creative/            # 创意类
-├── development/         # 开发工具
-├── devops/              # 运维自动化
-├── finance/             # 财务/金融
-├── health/              # 健康管理
-├── learning/            # 学习辅助
-├── media/               # 多媒体处理
-├── productivity/        # 生产力工具
-├── research/            # 研究/分析
-└── utility/             # 通用工具（calculator 等）
-```
+`echo_agent/app.py` 将配置、存储、模型、Agent、通道和 Gateway 连接起来。`echo_agent/tools/` 是工具扩展的公共入口；`echo_agent/agent/tools/` 实现内置工具。Gateway 使用 `aiohttp` 和令牌/配对授权，不使用 JWT 服务端或 ASGI 框架。SQLite 表结构迁移在 `echo_agent/storage/sqlite.py` 初始化连接时运行；`echo-agent migrate` 位于 `echo_agent/cli/migrate_cmd.py`，处理的是记忆数据。

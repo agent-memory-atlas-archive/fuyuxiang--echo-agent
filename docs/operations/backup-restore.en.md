@@ -1,63 +1,58 @@
-# Backup & Restore
+# Backup and Restore
 
-Protect your Echo Agent data with regular backups.
+The default workspace is `~/.echo-agent`, but `workspace`, `-w/--workspace`, and individual `storage.*` settings can move data. Use `echo-agent config dump` to identify the effective paths. A full backup should cover configuration, the SQLite database, `storage.sessions_dir`, `storage.memory_dir`, and any knowledge documents or skills you need to retain. `checkpoint.store_path` defaults to `~/.echo-agent/checkpoints/store` and can be included as needed.
 
----
+## Stopped-service full backup
 
-## What to Back Up
-
-| Data | Location | Priority |
-|------|----------|----------|
-| Configuration | `~/.echo-agent/config.yaml` | High |
-| SQLite database | `~/.echo-agent/data/echo_agent.db` | High |
-| Memory store | `~/.echo-agent/data/memory/` | High |
-| Knowledge base | `~/.echo-agent/data/knowledge/` | Medium |
-| Skills (user) | `~/.echo-agent/skills/` | Medium |
-| Checkpoints | `~/.echo-agent/data/checkpoints/` | Low |
-| Logs | `~/.echo-agent/data/logs/` | Low |
-
-## Backup Procedure
-
-```bash
-# Stop the service first for consistency
-echo-agent gateway stop
-
-# Create backup
-BACKUP_DIR="echo-agent-backup-$(date +%Y%m%d)"
-mkdir -p "$BACKUP_DIR"
-cp -r ~/.echo-agent/config.yaml "$BACKUP_DIR/"
-cp -r ~/.echo-agent/data/ "$BACKUP_DIR/"
-cp -r ~/.echo-agent/skills/ "$BACKUP_DIR/"
-
-# Restart
-echo-agent gateway start
-```
-
-!!! warning
-    Always stop the Gateway before backing up SQLite databases to avoid corruption.
-
-## Restore { #restore-sqlite-backup }
+Stop writes first. For an installed user-level background service:
 
 ```bash
 echo-agent gateway stop
-cp -r "$BACKUP_DIR/data/" ~/.echo-agent/
-cp "$BACKUP_DIR/config.yaml" ~/.echo-agent/
+tar -czf "$HOME/echo-agent-backup-$(date +%Y%m%d).tar.gz" -C "$HOME" .echo-agent
 echo-agent gateway start
 ```
 
-## Checkpoint System
+For a foreground `echo-agent run` or `echo-agent gateway` process, stop that process first. Change the `-C` directory and archive member if you use a custom workspace. Do not copy a live SQLite database file directly. Backups may contain tokens, conversations, and memory; restrict access to the archive.
 
-Echo Agent provides built-in file checkpoints:
+## Online SQLite backup
+
+The SQLite CLI's `.backup` command makes a consistent database copy:
 
 ```bash
-echo-agent checkpoint list
-echo-agent checkpoint show <id>
-echo-agent checkpoint restore <id>
+sqlite3 "$HOME/.echo-agent/data/echo_agent.db"   ".backup '$HOME/echo-agent-sqlite-backup.db'"
 ```
 
-Checkpoints track file-level changes made by the agent and allow targeted rollback.
+This copies only the database. Back up memory, sessions, configuration, and other files separately. Their timestamps may not match the database snapshot, so use a stopped-service backup for a consistent full-workspace archive.
 
-!!! warning "What checkpoints do not cover"
-    A checkpoint is a shadow Git snapshot of workspace **files**. Its exclusion list covers the SQLite database, the sessions directory, the memory directory and the logs directory — a file-level snapshot of a live SQLite file would be a torn read — so none of that data is captured.
+## Restore a full backup
 
-    `checkpoint restore` therefore does not restore sessions or memory. Recover those from a SQLite backup as described below.
+Stop the service or foreground process and preserve the current workspace before restoring an archive compatible with the target program version. For example:
+
+```bash
+echo-agent gateway stop
+mv "$HOME/.echo-agent" "$HOME/.echo-agent.before-restore"
+tar -xzf "$HOME/echo-agent-backup-20261001.tar.gz" -C "$HOME"
+sqlite3 "$HOME/.echo-agent/data/echo_agent.db" "PRAGMA integrity_check;"
+echo-agent config validate
+echo-agent gateway start
+echo-agent gateway status
+```
+
+Replace paths and filenames with your actual backup. Inspect the archive and its source before restoring. If no background service is installed, stop and restart the corresponding foreground process instead.
+
+## Restore an SQLite backup { #restore-sqlite-backup }
+
+A database-only restore must be compatible with the remaining files:
+
+```bash
+echo-agent gateway stop
+cp "$HOME/echo-agent-sqlite-backup.db" "$HOME/.echo-agent/data/echo_agent.db"
+sqlite3 "$HOME/.echo-agent/data/echo_agent.db" "PRAGMA integrity_check;"
+echo-agent gateway start
+```
+
+Preserve the current database before overwriting it. Restore sessions, memory, and configuration from matching backups if they are stored outside the copied database.
+
+## Checkpoint scope
+
+`echo-agent checkpoint list`, `show`, `restore`, and `prune` operate on shadow Git snapshots of workspace files. Snapshots exclude the database, sessions, memory, and logs. They are not full backups and cannot reverse SQLite schema changes. See the [filesystem layout](../reference/filesystem-layout.en.md) and [upgrade and data migration](upgrade-migrations.en.md).

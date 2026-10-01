@@ -91,7 +91,7 @@ The system defines four risk levels via the `RiskLevel` enum:
 | Level | Value | Approval Requirement | Description |
 |-------|-------|---------------------|-------------|
 | Read-only | `read_only` | Never requires approval | Pure read operations, no side effects |
-| Write | `write` | Auto-approved in interactive mode | Has side effects but protected by sandbox/path policy |
+| Write | `write` | Handled by the approval policy in interactive mode | Has side effects; file tools are also subject to workspace path rules |
 | Exec | `exec` | Requires allowlist or approval | Process/code execution, may produce arbitrary side effects |
 | Dangerous | `dangerous` | Always requires human approval | Creates persistent privileged state (cron jobs/skill installs) |
 

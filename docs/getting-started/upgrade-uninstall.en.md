@@ -11,7 +11,7 @@
     Upgrade to a specific version:
 
     ```bash
-    pip install echo-agent[all]==0.3.8
+    pip install "echo-agent[all]==0.3.8"
     ```
 
 === "Source Upgrade"
@@ -31,33 +31,26 @@
 
     1. Read the [CHANGELOG](https://github.com/fuyuxiang/echo-agent/blob/master/CHANGELOG.md) for details on changes
     2. Back up your data directory
-    3. Run database migration if required
+    3. Stop the service, back up the full workspace, then upgrade and validate the configuration
 
 **Back up data:**
 
 ```bash
 # Default data directory location
-cp -r ~/.echo-agent ~/.echo-agent.backup.$(date +%Y%m%d)
+tar -czf "$HOME/echo-agent-backup-$(date +%Y%m%d).tar.gz" -C "$HOME" .echo-agent
 ```
 
 ---
 
-### Database Migration
+### Data migration
 
-If the database schema has changed between versions, run the migration command after upgrading:
-
-```bash
-echo-agent migrate
-```
-
-!!! note "Automatic Migration Detection"
-    `echo-agent run` checks the schema version on startup. If migration is needed, it displays a prompt and refuses to start — run `echo-agent migrate` to resolve.
+SQLite schema migrations run automatically during database initialization. `echo-agent migrate` only updates USER memory ownership keys or imports legacy memory shards; it does not migrate the database schema. For a memory migration, first run `echo-agent migrate status` and `echo-agent migrate run --dry-run`. See [upgrade and data migration](../operations/upgrade-migrations.en.md).
 
 ---
 
 ### Checkpoint Recovery
 
-If issues arise after upgrading, roll back to a previous checkpoint:
+Checkpoints can restore workspace files changed by the agent:
 
 ```bash
 # List available checkpoints
@@ -79,25 +72,23 @@ pip uninstall echo-agent
 
 ### Full Cleanup
 
-Uninstall the package and remove all data:
+Stop and uninstall the Gateway background service first. After backing up required data, uninstall the package and remove the default workspace:
 
 ```bash
-# Uninstall Python package
+echo-agent gateway stop
+echo-agent gateway uninstall
 pip uninstall echo-agent
-
-# Remove data directory (config, database, memory)
 rm -rf ~/.echo-agent
-
-# If installed via the one-line script, also remove the venv
-rm -rf ~/.echo-agent/venv
 rm -f ~/.local/bin/echo-agent
 ```
+
+The one-line installer puts its source checkout and virtual environment under `~/.echo-agent/echo-agent/venv` by default, so removing the default workspace removes them as well. If you used a custom `ECHO_INSTALL_DIR`, inspect that directory before handling it separately. `pip uninstall` only affects the active Python environment.
 
 !!! warning "Data is Unrecoverable"
     Deleting `~/.echo-agent` permanently removes all data, including:
 
     - Configuration file (`config.yaml`)
-    - Conversation history and memory database
+    - SQLite database, session files, and memory files
     - Accumulated skills and evolution records
     - Scheduled task configurations
 
@@ -109,14 +100,7 @@ rm -f ~/.local/bin/echo-agent
 
 If Playwright browser dependencies were installed:
 
-```bash
-# List installed browsers
-playwright install --list
-
-# Remove all Playwright browsers
-rm -rf ~/.cache/ms-playwright        # Linux
-rm -rf ~/Library/Caches/ms-playwright # macOS
-```
+Playwright browser caches may be shared with other projects. Check the management commands and cache location for your installed version before removing them.
 
 ---
 
@@ -136,20 +120,10 @@ rm -rf node_modules dist
 If a new version has issues and you need to roll back:
 
 ```bash
-# Install a specific older version
-Install the specific older version:
-
-```bash
-pip install echo-agent[all]==0.3.6
-```
-
-If `echo-agent migrate run` was applied during the upgrade, undo it with the matching command:
-
-```bash
-echo-agent migrate rollback
+pip install "echo-agent[all]==0.3.6"
 ```
 
 !!! warning "Checkpoints do not contain the database"
-    `echo-agent checkpoint` is a shadow Git snapshot of workspace **files**, and its exclusion list explicitly covers the SQLite database, the sessions directory, the memory directory and the logs directory (a file-level snapshot of a live SQLite file would be a torn read). `checkpoint restore` therefore cannot restore database state.
+    `echo-agent checkpoint` is a shadow Git snapshot of workspace **files**. It excludes the SQLite database, sessions, memory, and logs; `checkpoint restore` cannot recover them.
 
-    Data-layer rollback has exactly two routes: `echo-agent migrate rollback`, or a database file you copied yourself beforehand. Copy `data/echo_agent.db` before downgrading.
+    Downgrading the package does not reverse database changes. Stop the service and restore a full backup compatible with the older version. `echo-agent migrate rollback` only restores the latest USER memory migration backup. See [upgrade and data migration](../operations/upgrade-migrations.en.md) and [backup and restore](../operations/backup-restore.en.md).

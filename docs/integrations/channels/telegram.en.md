@@ -47,8 +47,8 @@ channels:
 
 !!! warning
     The token grants full access to the Bot. Never commit it to a public repository. Use environment variable injection instead:
-    ```yaml
-    token: "${TELEGRAM_BOT_TOKEN}"
+    ```bash
+    export ECHO_AGENT_CHANNELS__TELEGRAM__TOKEN="$TELEGRAM_BOT_TOKEN"
     ```
 
 To obtain user IDs for `allow_from`:

@@ -26,12 +26,9 @@ Echo Agent 提供 35 个内置技能，分布在 10 个类别中。本文列出�
 | 技能名 | 描述 | 所需环境变量 |
 |--------|------|-------------|
 | excel-author | 根据需求创建和编辑 Excel 表格，支持公式、图表和样式 | — |
-| image-gen | 根据文字描述生成图片，支持多种风格和尺寸 | `OPENAI_API_KEY` |
-| meme-gen | 根据话题或情境生成表情包/梗图 | `OPENAI_API_KEY` |
+| image-gen | 通过 OpenAI、Stability AI 或 Pollinations 生成图片 | OpenAI 用 `OPENAI_API_KEY`；Stability 用 `STABILITY_API_KEY`；Pollinations 无需密钥 |
+| meme-gen | 用 Pillow 为模板或自选图片添加文字 | 无 API Key；需要 Pillow |
 | ppt-author | 创建演示文稿，自动排版、配图和动画 | — |
-
-!!! tip "图片生成提示"
-    `image-gen` 和 `meme-gen` 都会自动将中文描述翻译为英文 prompt，以获得最佳生成效果。你只需用中文描述想要的画面即可。
 
 ---
 
@@ -41,14 +38,14 @@ Echo Agent 提供 35 个内置技能，分布在 10 个类别中。本文列出�
 
 | 技能名 | 描述 | 所需环境变量 |
 |--------|------|-------------|
-| code-runner | 在沙箱中执行 Python/JS/Shell 代码片段并返回结果 | — |
-| github-ops | 执行 GitHub 操作：创建 issue、PR、查看仓库状态 | `GITHUB_TOKEN` |
+| code-runner | 执行 Python 代码片段，并做超时与部分危险模式检查 | — |
+| github-ops | 通过 `gh` CLI 执行 GitHub 操作 | 需要 `gh` 及其登录状态 |
 | plan | 将复杂任务分解为可执行的步骤计划 | — |
 | skill-creator | 辅助创建新的 SKILL.md 技能文件 | — |
 | workflow-chain | 将多个技能串联为自动化工作流 | — |
 
-!!! warning "code-runner 安全限制"
-    `code-runner` 在受限沙箱中执行代码，无法访问网络和文件系统（除指定临时目录）。如需完整执行环境，请使用插件方式扩展。
+!!! warning "code-runner 不是安全沙箱"
+    该技能通过主机 Python 子进程执行代码。临时工作目录和模式检查不能阻止代码读取主机文件，也不构成可靠的网络隔离；不要用它执行不可信代码。
 
 ---
 
@@ -70,7 +67,7 @@ Echo Agent 提供 35 个内置技能，分布在 10 个类别中。本文列出�
 | 技能名 | 描述 | 所需环境变量 |
 |--------|------|-------------|
 | finance-tracker | 记录和分析个人收支，生成财务报表 | — |
-| stocks | 查询实时股票行情、历史数据和技术指标 | `ALPHA_VANTAGE_KEY` |
+| stocks | 通过免费公开接口查询股票、基金和加密货币行情 | 无 API Key |
 
 ---
 
@@ -103,7 +100,7 @@ Echo Agent 提供 35 个内置技能，分布在 10 个类别中。本文列出�
 
 | 技能名 | 描述 | 所需环境变量 |
 |--------|------|-------------|
-| tts-voice | 将文本转换为自然语音，支持多种声音和语言 | `ELEVENLABS_API_KEY` |
+| tts-voice | 使用 Edge TTS 或 OpenAI TTS 合成语音 | Edge TTS 无密钥；OpenAI 需要 `OPENAI_API_KEY` |
 | voice-note | 将语音消息转录为文字并整理为笔记 | — |
 
 ---
@@ -114,11 +111,11 @@ Echo Agent 提供 35 个内置技能，分布在 10 个类别中。本文列出�
 
 | 技能名 | 描述 | 所需环境变量 |
 |--------|------|-------------|
-| calendar | 管理日历事件：创建、查询、修改和删除日程 | `GOOGLE_CREDENTIALS_JSON` |
+| calendar | 通过 CalDAV 或本地 ICS 管理日程 | CalDAV 需要服务器地址与账户凭据；本地 ICS 无密钥 |
 | daily-briefing | 生成每日简报：天气、日程、待办、新闻摘要 | — |
-| email-assistant | 撰写、回复和管理邮件，支持模板和批量操作 | `EMAIL_CREDENTIALS` |
+| email-assistant | 通过 Himalaya 或 IMAP/SMTP 阅读与发送邮件 | 配置 Himalaya 账户或 `ECHO_EMAIL_HOST` 等邮件连接变量 |
 | note-taking | 结构化笔记记录，支持标签、搜索和导出 | — |
-| notion-sync | 双向同步 Notion 数据库和页面内容 | `NOTION_TOKEN` |
+| notion-sync | 读取、创建和更新 Notion 页面与数据库 | `NOTION_API_TOKEN` |
 | ocr-document | 从图片或 PDF 中提取文字，支持表格识别 | — |
 | reminder | 设置定时提醒，支持重复提醒和条件触发 | — |
 | summarize | 对长文本、网页、文档进行智能摘要 | — |
@@ -136,10 +133,10 @@ Echo Agent 提供 35 个内置技能，分布在 10 个类别中。本文列出�
 | 技能名 | 描述 | 所需环境变量 |
 |--------|------|-------------|
 | arxiv | 搜索 arXiv 论文，获取摘要和 PDF 链接 | — |
-| deep-research | 对复杂话题进行多轮深度研究并生成报告 | `TAVILY_API_KEY` |
+| deep-research | 组合搜索、网页提取与交叉核对，生成带来源的报告 | 无固定 API Key；取决于所选搜索方式 |
 | rss-watcher | 监控 RSS 源，提取更新并生成摘要 | — |
 | web-extract | 从网页中提取结构化数据（文章、表格、列表） | — |
-| web-search | 执行网页搜索并返回结构化结果 | `SERPAPI_KEY` 或 `TAVILY_API_KEY` |
+| web-search | 使用 DuckDuckGo 或自行部署的 SearXNG 检索网页 | 无 API Key；需要相应服务或依赖 |
 
 !!! warning "deep-research 的开销显著高于其他技能"
     它会执行多轮检索与网页抓取，单次调用的 token 消耗可能是普通对话的数十倍。技能本身不做用量预估，也没有内置上限。
@@ -156,28 +153,14 @@ Echo Agent 提供 35 个内置技能，分布在 10 个类别中。本文列出�
 |--------|------|-------------|
 | calculator | 执行数学计算、单位换算和公式求解 | — |
 | file-convert | 文件格式转换：PDF↔Word、图片格式、音视频转码 | — |
-| maps-poi | 地点搜索、路线规划和 POI 兴趣点查询 | `AMAP_API_KEY` 或 `GOOGLE_MAPS_KEY` |
+| maps-poi | 使用 OpenStreetMap/Nominatim 与 OSRM 检索地点和路线 | 默认无 API Key；可选 `AMAP_API_KEY` |
 | text-tools | 文本处理工具集：翻译、格式化、正则替换、编码转换 | — |
 
 ---
 
-## 环境变量汇总
+## 凭据与运行条件
 
-以下是所有需要环境变量的技能汇总：
-
-| 环境变量 | 使用技能 | 获取方式 |
-|----------|---------|---------|
-| `OPENAI_API_KEY` | image-gen, meme-gen | [OpenAI Platform](https://platform.openai.com/) |
-| `GITHUB_TOKEN` | github-ops | [GitHub Settings → Tokens](https://github.com/settings/tokens) |
-| `ALPHA_VANTAGE_KEY` | stocks | [Alpha Vantage](https://www.alphavantage.co/support/) |
-| `ELEVENLABS_API_KEY` | tts-voice | [ElevenLabs](https://elevenlabs.io/) |
-| `GOOGLE_CREDENTIALS_JSON` | calendar | [Google Cloud Console](https://console.cloud.google.com/) |
-| `EMAIL_CREDENTIALS` | email-assistant | 邮箱服务商提供 |
-| `NOTION_TOKEN` | notion-sync | [Notion Integrations](https://www.notion.so/my-integrations) |
-| `TAVILY_API_KEY` | deep-research, web-search | [Tavily](https://tavily.com/) |
-| `SERPAPI_KEY` | web-search | [SerpAPI](https://serpapi.com/) |
-| `AMAP_API_KEY` | maps-poi | [高德开放平台](https://lbs.amap.com/) |
-| `GOOGLE_MAPS_KEY` | maps-poi | [Google Maps Platform](https://developers.google.com/maps) |
+上表区分了必需的账户凭据与可选的供应商密钥。`image-gen` 的 OpenAI 和 Stability AI 路径分别使用 `OPENAI_API_KEY` 和 `STABILITY_API_KEY`；Pollinations 路径无密钥。`tts-voice` 的 Edge TTS 路径无密钥，OpenAI 路径使用 `OPENAI_API_KEY`。`notion-sync` 使用 `NOTION_API_TOKEN`；`github-ops` 依赖已登录的 `gh` CLI。`calendar` 的 CalDAV 路径需相应账户凭据；本地 ICS 路径不需要网络密钥。具体安装命令和限制以各技能的 `SKILL.md` 为准。
 
 ## 相关链接
 

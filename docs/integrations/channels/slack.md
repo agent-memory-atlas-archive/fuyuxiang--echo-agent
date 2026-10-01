@@ -79,9 +79,9 @@ channels:
 
 !!! warning
     `bot_token`（xoxb-）和 `app_token`（xapp-）是两个不同的凭证，缺一不可。建议通过环境变量管理：
-    ```yaml
-    bot_token: "${SLACK_BOT_TOKEN}"
-    app_token: "${SLACK_APP_TOKEN}"
+    ```bash
+    export ECHO_AGENT_CHANNELS__SLACK__BOT_TOKEN="$SLACK_BOT_TOKEN"
+    export ECHO_AGENT_CHANNELS__SLACK__APP_TOKEN="$SLACK_APP_TOKEN"
     ```
 
 ---

@@ -1,13 +1,13 @@
 # 快速上手
 
-5 分钟完成从安装到发送第一条消息的全流程。
+按以下步骤完成安装、模型配置和首次对话。所需时间取决于依赖下载和模型服务连接。
 
 ---
 
 ## 第一步：安装
 
 ```bash
-pip install echo-agent[all]
+pip install "echo-agent[all]"
 ```
 
 验证安装成功：
@@ -23,7 +23,7 @@ echo-agent --version
     ```bash
     python -m venv ~/.echo-agent/venv
     source ~/.echo-agent/venv/bin/activate
-    pip install echo-agent[all]
+    pip install "echo-agent[all]"
     ```
 
 ---
@@ -49,11 +49,15 @@ echo-agent setup
     ```bash
     mkdir -p ~/.echo-agent
     cat > ~/.echo-agent/config.yaml << 'EOF'
-    model:
-      provider: openai
-      model: gpt-4o
-      api_key: sk-your-key-here
+    models:
+      default_model: gpt-4o
+      providers:
+        - name: openai
+          models: [gpt-4o]
+          api_key_env: OPENAI_API_KEY
     EOF
+    export OPENAI_API_KEY=sk-your-key-here
+    echo-agent config validate
     ```
 
 ---
@@ -64,16 +68,7 @@ echo-agent setup
 echo-agent run
 ```
 
-启动成功后你会看到类似输出：
-
-```
-[INFO] Echo Agent v0.3.8 starting...
-[INFO] Model: openai/gpt-4o
-[INFO] Memory: loaded (42 entries)
-[INFO] Skills: 12 active
-[INFO] Channels: cli
-[INFO] Ready. Type your message below.
-```
+启动后在终端提示符中输入消息。若连接模型失败，先运行 `echo-agent config validate` 检查配置。
 
 ---
 
@@ -91,7 +86,7 @@ Agent 会回复并记住这次对话。你可以继续对话，Agent 具备上�
 
 ## 第五步：验证成功
 
-确认以下功能正常工作：
+在另一个终端确认配置与成本报告可读取：
 
 ```bash
 # 查看运行状态
@@ -100,8 +95,6 @@ echo-agent status
 # 查看费用统计
 echo-agent cost
 
-# 查看已加载的技能
-echo-agent skill list
 ```
 
 !!! tip "验证记忆"
@@ -118,14 +111,7 @@ echo-agent skill list
 - **打开 Dashboard** — 通过 Web 面板管理 Agent：
   ```bash
   echo-agent gateway
-  # 浏览器访问 http://localhost:8080
+  # 浏览器访问 http://127.0.0.1:58123（默认端口）
   ```
-- **探索技能** — 查看和管理 Agent 的技能库：
-  ```bash
-  echo-agent skill list
-  echo-agent evolution status
-  ```
-- **定时任务** — 让 Agent 定时执行任务：
-  ```bash
-  echo-agent cron add "每天早上9点汇报天气" --schedule "0 9 * * *"
-  ```
+- **探索技能** — 在 Dashboard 的 Skills 页面查看已加载技能；`echo-agent skill list-staged` 只列出待审批技能。
+- **定时任务** — 在 Dashboard 的 Cron 页面创建任务；CLI 的 `cron` 子命令只提供 `list`、`authorize` 和 `revoke`。参见[定时任务](../guides/scheduled-jobs.md)。

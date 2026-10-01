@@ -1,78 +1,39 @@
 # MCP (Model Context Protocol)
 
-Connect external tool servers via MCP protocol to extend Agent capabilities.
-
----
-
-## Overview
-
-MCP is a standardized AI tool communication protocol. Echo Agent acts as an MCP client, connecting to any MCP Server for additional tool capabilities.
+Echo Agent acts as an MCP client for external tool servers. The current implementation requests protocol version `2025-06-18` and can negotiate `2025-03-26` or `2024-11-05`. It supports stdio and Streamable HTTP transport, tool listing and calls, resources and prompts, and reconnects. Sampling, elicitation, roots, and progress notifications are not implemented.
 
 ## Configuration
 
+`tools.mcp.enabled` is the master switch. Each entry in `tools.mcp_servers` selects exactly one of `command` (stdio) or `url` (Streamable HTTP); setting both or neither on an enabled server fails configuration validation.
+
 ```yaml
 tools:
+  mcp:
+    enabled: true
   mcp_servers:
     filesystem:
-      command: "npx"
+      command: npx
       args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
       enabled: true
-    
-    web-search:
-      url: "http://localhost:8080/mcp"
+    remote:
+      url: https://mcp.example.com/mcp
       headers:
-        Authorization: "Bearer ${MCP_TOKEN}"
+        Authorization: "Bearer $MCP_TOKEN"
       enabled: true
 ```
 
-## Transports
+MCP `env` and `headers` values support dollar-variable expansion; an unset referenced variable is an error. This is specific to MCP server settings: the general configuration loader does not expand environment placeholders in arbitrary YAML values.
 
-### Stdio (subprocess)
+The schema default for `execution.network_policy` is `deny`, but the packaged defaults set `allow`. Explicit `deny` skips HTTP MCP servers; remote connections require outbound network access.
 
-```yaml
-tools:
-  mcp_servers:
-    my-server:
-      command: "python"
-      args: ["-m", "my_mcp_server"]
-      env:
-        API_KEY: "${MY_API_KEY}"
-```
+## Authentication and trust
 
-### HTTP/SSE (remote)
+HTTP servers can set `auth: oauth` for OAuth 2.1 authorization code with PKCE, or supply authorization headers. OAuth is only valid with `url`. `trust_level` defaults to `untrusted`; such server tools are gated at execution risk or above, and server-provided read-only hints cannot lower that gate. Set `trusted` only for servers you control.
 
-```yaml
-tools:
-  mcp_servers:
-    remote:
-      url: "https://mcp.example.com/sse"
-      headers:
-        Authorization: "Bearer token"
-      auth: "oauth"
-```
+`tools_include` and `tools_exclude` filter exposed tool names. MCP tools also pass the agent's tool policy and approval checks.
 
-## Tool Filtering
+## Resources and prompts
 
-```yaml
-tools:
-  mcp_servers:
-    my-server:
-      command: "..."
-      tools_include: ["read_file", "write_file"]
-      tools_exclude: ["dangerous_tool"]
-```
+The built-in `mcp_resources` and `mcp_prompts` tools expose list/read and list/get operations respectively. Specify `server` when more than one server is connected. Responses are external data and should be treated as untrusted content.
 
-## Security
-
-- MCP tools validated via `validate_mcp_tools()`
-- MCP tools with names conflicting built-ins are rejected
-- Subject to `tools.profile` and `permissions.approval.mode`
-
-## Reconnection
-
-Automatic exponential backoff (1, 2, 4, 8, 16, 30, 60s), max 5 attempts.
-
-## Protocol
-
-- JSON-RPC 2.0, protocol version 2024-11-05
-- Capabilities: tools/list, tools/call, resources/list, resources/read, prompts/list, prompts/get
+For field-level options, see the [configuration reference](../reference/configuration.en.md).

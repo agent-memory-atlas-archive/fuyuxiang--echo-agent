@@ -31,7 +31,7 @@ source .venv/bin/activate
 ### 3. 安装依赖
 
 ```bash
-# 安装全部可选依赖 + 开发工具
+# 安装 all 组列出的常用可选依赖及开发工具
 pip install -e ".[all,dev]"
 ```
 

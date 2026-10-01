@@ -9,7 +9,7 @@ This section covers all core capabilities of Echo Agent, from model integration 
 | Section | Description |
 |---------|-------------|
 | [Model Integration](models/index.en.md) | Multi-model configuration, load balancing, custom endpoints |
-| [Tools & Permissions](tools-permissions.en.md) | Built-in tool registration, permission policies, sandbox isolation |
+| [Tools & Permissions](tools-permissions.en.md) | Built-in tool registration, permission policies, and execution-backend boundaries |
 | [Execution Backends](execution-backends.en.md) | Local/remote/containerized execution environments |
 | [Browser & Media](browser-media.en.md) | Web interaction, screenshots, file upload & media processing |
 | [Memory Management](memory-management.en.md) | Short/long-term memory, vector storage, retrieval strategies |

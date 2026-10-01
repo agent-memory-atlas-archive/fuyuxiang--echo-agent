@@ -266,10 +266,10 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Versioning & Compatibility
 
-Currently `0.3.x`, in Beta. Compatibility follows semantic versioning:
+Currently `0.3.x`, in Beta. Version numbers use the semantic-version format; read each release's notes for actual compatibility:
 
-- **PATCH** (`0.3.x`) is backward compatible and safe to upgrade in place.
-- **MINOR** (`0.x.0`) keeps configuration compatible; when data structures change, a migration ships with the release: `echo-agent migrate status` lists pending items, `echo-agent migrate run` applies them (`--dry-run` to preview), `echo-agent migrate rollback` reverts.
+- **PATCH** (`0.3.x`) is generally used for fixes; read the release notes and back up before upgrading.
+- **MINOR** (`0.x.0`) may include breaking configuration or data changes during Beta; read the notes for each release. SQLite schema migrations run automatically during database initialization; `echo-agent migrate` only handles USER memory ownership and legacy memory-shard imports.
 - Changes to configuration keys and to the plugin / skill interfaces are itemised in the [CHANGELOG](CHANGELOG.md).
 
 Back up your workspace directory before upgrading. See [upgrade & migrations](https://fuyuxiang.github.io/echo-agent/en/operations/upgrade-migrations/) for the procedure and [compatibility](https://fuyuxiang.github.io/echo-agent/en/reference/compatibility/) for the stability level of each interface.

@@ -397,7 +397,7 @@ Execute a shell command in the workspace.
 
 #### execute_code
 
-Execute a code snippet in a sandboxed subprocess.
+Run a code snippet through the configured execution backend. The default `tools.exec.host: sandbox` uses a host process and a copied working directory; it does not provide OS-level isolation.
 
 | Parameter | Type | Required | Default | Values | Description |
 |-----------|------|:--------:|---------|--------|-------------|

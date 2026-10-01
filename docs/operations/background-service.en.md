@@ -1,62 +1,55 @@
 # Background Service
 
-Run Echo Agent as a persistent background service for 24/7 operation.
+`echo-agent gateway install` creates a systemd user service on Linux or a launchd LaunchAgent on macOS. The service manager runs the foreground Gateway process and handles restarts and logs. `echo-agent gateway` also runs directly in the foreground.
 
----
-
-## Linux (systemd)
+## Install and manage
 
 ```bash
-# Install the service
 echo-agent gateway install
-
-# Manage
 echo-agent gateway start
-echo-agent gateway stop
-echo-agent gateway restart
 echo-agent gateway status
 echo-agent gateway logs
-```
-
-The install command creates a systemd user service (`~/.config/systemd/user/echo-agent.service`) with `lingering` enabled for persistence across logouts.
-
-!!! tip
-    Enable lingering: `loginctl enable-linger $USER`
-
-## macOS (launchd)
-
-```bash
-echo-agent gateway install
-echo-agent gateway start
-```
-
-Creates a LaunchAgent plist at `~/Library/LaunchAgents/com.echo-agent.gateway.plist`.
-
-## Alternative: tmux/screen
-
-```bash
-tmux new-session -d -s echo-agent 'echo-agent gateway'
-tmux attach -t echo-agent
-```
-
-## Alternative: Docker
-
-!!! note "No official image"
-    There is no published Docker image and no Dockerfile in the repository; a container deployment has to be built yourself. Contributions in this area are [welcome](https://github.com/fuyuxiang/echo-agent/issues).
-
-    Note that resident-service registration (`echo-agent gateway install`) targets systemd and launchd, so in a container you run `echo-agent gateway` in the foreground as the entrypoint instead.
-
-## Verifying the Service
-
-```bash
-echo-agent status
-# Or check health endpoint:
-curl http://127.0.0.1:58123/api/v1/health
-```
-
-## Uninstalling
-
-```bash
+echo-agent gateway logs --follow
+echo-agent gateway restart
 echo-agent gateway stop
 echo-agent gateway uninstall
 ```
+
+For a custom workspace or configuration, specify paths when installing:
+
+```bash
+echo-agent gateway install --workspace /srv/echo-agent --config /srv/echo-agent/echo-agent.yaml
+echo-agent gateway start
+```
+
+Installation embeds resolved workspace and configuration paths in the service definition. Reinstall and restart the service after changing those paths or the Python installation.
+
+## Linux: systemd
+
+The default unit path is `~/.config/systemd/user/echo-agent.service`. The generated unit uses an absolute Python interpreter path, `-m echo_agent gateway`, a working directory, and `_ECHO_AGENT_SUPERVISED=1`. It sets `Restart=always` with a five-second delay, a limit of ten failed starts within 300 seconds, and a 60-second stop timeout.
+
+```bash
+systemctl --user status echo-agent
+journalctl --user -u echo-agent -n 100
+journalctl --user -u echo-agent -f
+```
+
+To keep the user service running after logout, enable lingering separately according to your system policy; installation does not do this automatically:
+
+```bash
+sudo loginctl enable-linger "$(whoami)"
+```
+
+Linux also supports `echo-agent gateway install --system` for a system-level service, which requires the appropriate permissions.
+
+## macOS: launchd
+
+The default plist path is `~/Library/LaunchAgents/com.echo-agent.gateway.plist`. It sets `RunAtLoad`, `KeepAlive`, a working directory, and `_ECHO_AGENT_SUPERVISED=1`. Both output streams go to `~/.echo-agent/logs/gateway.log`; `echo-agent gateway logs` reads it. The plist's `ExitTimeOut` is 60 seconds.
+
+## Environment and shutdown
+
+A service does not automatically inherit temporary environment variables exported in an interactive shell. Supply model keys and configuration overrides through the service manager's environment configuration, then restart it. Keep real keys out of repository files.
+
+The stop timeout is the service manager's maximum exit window; it does not guarantee that an active Agent turn finishes within 60 seconds. `echo-agent gateway status` reports service state, not the number of active tasks. Stop the process before taking a full database backup; see [backup and restore](backup-restore.en.md).
+
+In a container, run `echo-agent gateway` as the foreground entrypoint instead of installing a systemd or launchd service. See [deployment](deployment.en.md).

@@ -11,7 +11,7 @@ Echo Agent Gateway is an aiohttp-based HTTP/WebSocket server responsible for ing
 | Authentication & rate limiting | Multi-mode auth + token-bucket rate limiting |
 | Cross-platform delivery routing | Automatically select delivery channel based on target platform |
 | Progressive message editing | Real-time message updates during streaming output |
-| Health monitoring | `/health` endpoint for liveness probes |
+| Health monitoring | `{api_prefix}/health` (default `/api/v1/health`) for health probes |
 
 ## Architecture
 
@@ -65,10 +65,10 @@ Gateway exposes the following REST API modules under `gateway/api/`:
 ## Health Check
 
 ```
-GET /health
+GET /api/v1/health
 ```
 
-Returns `200 OK` when the service is running normally. Compatible with Kubernetes liveness/readiness probes and load balancer health checks.
+Returns JSON with HTTP `200` unless the status is `unhealthy`, in which case it returns `503`. Configure probe policy for the deployment environment.
 
 ## Rate Limiting
 
@@ -94,6 +94,7 @@ gateway:
     api_tokens: ["token-xxx"]
     admin_tokens: ["admin-xxx"]
     allowed_origins: ["https://my-dashboard.example.com"]
+    allowed_hosts: ["my-dashboard.example.com"]
 ```
 
 !!! warning "Production Notice"
@@ -101,22 +102,22 @@ gateway:
 
 ## Default listen address
 
-The Gateway listens on `127.0.0.1:58123` by default. The port comes from `gateway.port` and the host from `gateway.host`; both can also be overridden with `ECHO_AGENT_GATEWAY_PORT` and `ECHO_AGENT_GATEWAY_HOST` (the prefix is `ECHO_AGENT_`, with underscores joining config path segments).
+The Gateway listens on `127.0.0.1:58123` by default. The port comes from `gateway.port` and the host from `gateway.host`; both can also be overridden with `ECHO_AGENT_GATEWAY__PORT` and `ECHO_AGENT_GATEWAY__HOST` (double underscores separate config path segments).
 
 Setting `gateway.port` to `0` lets the system assign a port; the one actually bound is written to `workspace/.echo-agent/gateway.json`.
 
 ## Quick Start
 
-The Gateway is a **standalone process**; no other command starts it implicitly:
+Run the Gateway in the foreground or register it as a system service:
 
 ```bash
 echo-agent gateway              # run in the foreground
 echo-agent gateway install      # register as a resident background service
 ```
 
-`echo-agent run` is an interactive session with its own agent and does not bring a gateway up alongside it. Conversely, once the gateway is running, `echo-agent cli` attaches to it as a thin client. The two share the same state, but their lifecycles are independent.
+`echo-agent run` runs the full agent and also starts the Gateway when `gateway.enabled: true`. `echo-agent gateway` enables the Gateway in its own process even if `gateway.enabled` is absent from the configuration. Once running, `echo-agent cli` can attach as a thin client.
 
-Once started, visit `http://127.0.0.1:58123/health` to verify the service.
+With the default listen address and API prefix, visit `http://127.0.0.1:58123/api/v1/health` to check its status.
 
 ## Related Documentation
 

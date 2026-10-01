@@ -247,7 +247,7 @@ Implement Tool classes and hook functions as needed.
 ln -s $(pwd) ~/.echo-agent/plugins/my-echo-plugin
 
 # Start Echo Agent, observe plugin loading logs
-echo-agent --log-level DEBUG
+ECHO_AGENT_OBSERVABILITY__LOG_LEVEL=DEBUG echo-agent run
 ```
 
 ### 5. Package and Publish

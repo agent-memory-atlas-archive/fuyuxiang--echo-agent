@@ -254,7 +254,7 @@ models:
   providers:
     - name: my-service
       api_base: https://api.example.com/v1
-      api_key: ${MY_SERVICE_KEY}
+      api_key_env: MY_SERVICE_KEY
       models: ["my-model-v1"]
 ```
 

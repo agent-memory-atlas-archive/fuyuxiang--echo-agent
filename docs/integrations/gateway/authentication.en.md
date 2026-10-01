@@ -92,12 +92,12 @@ gateway:
 
 ### Token Delivery
 
-Tokens are passed via HTTP request headers. The default header name is `X-API-Token`:
+Tokens are passed via HTTP request headers. The default header name is `X-Echo-Agent-Token`:
 
 ```http
-GET /api/sessions HTTP/1.1
-Host: localhost:8090
-X-API-Token: tk-proj-abc123def456
+GET /api/v1/sessions HTTP/1.1
+Host: localhost:58123
+X-Echo-Agent-Token: tk-proj-abc123def456
 ```
 
 The header name is configurable:
@@ -105,7 +105,7 @@ The header name is configurable:
 ```yaml
 gateway:
   auth:
-    token_header: "X-API-Token"  # default
+    token_header: "X-Echo-Agent-Token"  # default
 ```
 
 !!! warning "Admin operations accept headers only"
@@ -243,7 +243,7 @@ gateway:
       - "tk-proj-abc123"
     admin_tokens:                  # admin tokens
       - "atk-master-key"
-    token_header: "X-API-Token"   # token header name
+    token_header: "X-Echo-Agent-Token"   # token header name
     allowed_origins:               # CORS origin whitelist
       - "https://dashboard.example.com"
     allowed_hosts:                 # Host header whitelist

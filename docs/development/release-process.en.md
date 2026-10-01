@@ -58,3 +58,5 @@ git push origin v0.3.x
 - [ ] Correct version
 - [ ] CHANGELOG updated
 - [ ] Git tag created
+
+The documentation site serves the current master branch rather than separate release versions. When a release changes upgrade behavior, update both `docs/operations/upgrade-migrations.md` and `docs/operations/upgrade-migrations.en.md` together with the Changelog.

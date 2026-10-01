@@ -19,7 +19,7 @@
 Echo Agent 的安装流程非常简单：
 
 ```bash
-pip install echo-agent[all]
+pip install "echo-agent[all]"
 echo-agent setup
 echo-agent run
 ```

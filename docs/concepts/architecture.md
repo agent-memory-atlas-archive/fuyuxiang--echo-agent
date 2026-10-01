@@ -212,6 +212,6 @@ graph TB
 | Event-driven | 所有 I/O 统一为 InboundEvent / OutboundEvent，通过 EventBus 解耦 |
 | Channel-agnostic core | AgentLoop 与通道实现完全解耦，同一套逻辑处理任何来源的消息 |
 | Pipeline stages | 处理流水线分为 ContextStage -> InferenceStage -> ResponseStage 三阶段 |
-| Security-by-default | ToolPolicy 过滤、ShellGuard 沙箱、ApprovalGate 人机协作审批 |
+| 默认安全控制 | ToolPolicy 工具准入、ShellGuard 命令策略检查、ApprovalGate 审批；命令策略不提供操作系统级隔离 |
 | Memory-augmented | 4-tier memory (working / episodic / semantic / procedural) 注入每次 context 构建 |
 | Self-evolving | 通过 trajectory 捕获与 evolution engine 实现自主技能改进 |

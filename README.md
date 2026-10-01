@@ -264,10 +264,10 @@ pytest
 
 ## 版本与兼容性
 
-当前 `0.3.x`，处于 Beta。兼容性按语义化版本处理：
+当前 `0.3.x`，处于 Beta。版本号采用语义化版本格式；具体兼容性以各版本更新说明为准：
 
-- **PATCH**（`0.3.x`）向后兼容，可直接升级。
-- **MINOR**（`0.x.0`）保持配置兼容，涉及数据结构调整时随版本提供迁移：`echo-agent migrate status` 查看待执行项，`echo-agent migrate run` 执行（`--dry-run` 先预演），`echo-agent migrate rollback` 回退。
+- **PATCH**（`0.3.x`）通常用于修复；升级前仍应阅读更新说明并备份。
+- **MINOR**（`0.x.0`）在 Beta 阶段可能包含配置或数据结构的破坏性变更；逐版本阅读更新说明。SQLite 表结构迁移在数据库初始化时自动执行；`echo-agent migrate` 仅用于 USER 记忆归属迁移和旧记忆分片导入。
 - 配置项与插件 / 技能接口的调整会在 [CHANGELOG](CHANGELOG.md) 中逐项标注。
 
 升级前建议备份工作区目录。详细流程见[升级与迁移](https://fuyuxiang.github.io/echo-agent/operations/upgrade-migrations/)，各接口的稳定级别见[兼容性说明](https://fuyuxiang.github.io/echo-agent/reference/compatibility/)。

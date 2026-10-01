@@ -72,7 +72,7 @@
 
     - Configuration file format (`config.yaml` schema)
     - Plugin / skill API interfaces
-    - Database schema (migration provided via `echo-agent migrate`)
+    - Database schema (migrated automatically during connection initialization; `echo-agent migrate` handles memory data only)
 
     Review the [CHANGELOG](https://github.com/fuyuxiang/echo-agent/blob/master/CHANGELOG.md) and back up your data before upgrading.
 

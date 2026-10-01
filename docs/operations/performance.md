@@ -17,7 +17,7 @@ Echo Agent 的性能瓶颈通常在模型调用延迟和本地数据 I/O。本�
 | 瓶颈 | 表现 | 优化方向 |
 |------|------|---------|
 | 模型延迟 | 响应等待时间长 | 模型选择、缓存、路由 |
-| SQLite I/O | 记忆检索慢 | 索引优化、WAL 模式 |
+| SQLite I/O | 任务、成本等查询变慢 | 检查本地磁盘与索引，确认 WAL 模式 |
 | 内存占用 | OOM 或 swap | 溢写配置、会话裁剪 |
 | 知识库检索 | 相似度搜索慢 | 索引重建、分片 |
 | 工具执行 | 外部调用超时 | 超时配置、并行执行 |
@@ -79,11 +79,11 @@ agent:
 
 ## SQLite 优化
 
-Echo Agent 使用 SQLite 存储元数据和记忆。以下配置可显著改善 I/O 性能：
+Echo Agent 使用 SQLite 存储部分运行数据；USER 与 ENVIRONMENT 记忆条目另存于 `storage.memory_dir` 下的 JSON 文件。
 
 ### WAL 模式
 
-SQLite 的连接参数（`journal_mode`、`synchronous`、`cache_size`、`mmap_size` 等 PRAGMA）**不可通过配置调整** —— 配置中没有 `database` 节，代码里也没有设置这些 PRAGMA 的位置。
+`echo_agent/storage/sqlite.py` 在连接时设置 `PRAGMA journal_mode=WAL`。配置中没有通用的 `database` 节，也没有暴露 `synchronous`、`cache_size`、`mmap_size` 等调优项。
 
 可配置的只有存储路径，位于 `storage`：
 
@@ -192,7 +192,7 @@ knowledge:
 
 | 配置项 | 作用 |
 |--------|------|
-| `execution.network_policy` | 出站网络总闸，默认 `deny` |
+| `execution.network_policy` | 出站网络总闸，包内默认配置为 `allow`（schema 默认 `deny`） |
 | `tools.web.proxy` | Web 工具的代理地址 |
 | `tools.web.timeout_seconds` | Web 工具超时，默认 `30` |
 | `tools.browser.nav_timeout_sec` | 浏览器导航超时 |
@@ -249,7 +249,7 @@ echo-agent deps status
 echo-agent config validate
 
 # 成本分析（定位高消耗操作）
-echo-agent cost --group-by model
+echo-agent cost --days 7
 ```
 
 !!! note "没有内置的 benchmark 命令"

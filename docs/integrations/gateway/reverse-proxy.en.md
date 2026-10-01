@@ -1,282 +1,77 @@
-# Gateway Reverse Proxy Setup
+# Gateway Reverse Proxy
 
-In production environments, Gateway is typically deployed behind a reverse proxy (such as nginx or Caddy) for HTTPS termination, domain routing, load balancing, and other capabilities.
+These examples bind the Gateway to `127.0.0.1:8090` and expose HTTPS through a reverse proxy. `8090` is an example port; the default is `58123`. The default health path is `/api/v1/health`; update the probe if `gateway.api_prefix` changes.
 
-## Why Use a Reverse Proxy
-
-- **HTTPS/TLS termination**: Handle SSL certificates at the proxy layer; Gateway only needs to handle plain HTTP
-- **Domain routing**: Serve multiple services through a single port 443
-- **Load balancing**: Distribute requests across multiple instances
-- **Security hardening**: Hide internal ports, centralize access control
-- **Static assets**: Serve dashboard frontend files directly from the proxy layer
-
-## Nginx Configuration
-
-### Basic HTTP + WebSocket Proxy
-
-```nginx
-upstream echo_gateway {
-    server 127.0.0.1:8090;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name gateway.example.com;
-
-    ssl_certificate     /etc/ssl/certs/gateway.example.com.pem;
-    ssl_certificate_key /etc/ssl/private/gateway.example.com.key;
-
-    # HTTP API proxy
-    location / {
-        proxy_pass http://echo_gateway;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # WebSocket proxy — session
-    location /ws {
-        proxy_pass http://echo_gateway;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # WebSocket timeout settings
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-
-    # WebSocket proxy — dashboard
-    location /ws/dashboard {
-        proxy_pass http://echo_gateway;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-
-    # Health check (optional: restrict to internal network)
-    location /api/v1/health {
-        proxy_pass http://echo_gateway;
-        # allow 10.0.0.0/8;
-        # deny all;
-    }
-}
-```
-
-!!! tip "WebSocket Timeout"
-    The default nginx `proxy_read_timeout` is 60 seconds, which will cause WebSocket long-lived connections to be terminated. Set it to 3600 seconds or longer. Gateway maintains connection liveness through ping/pong frames.
-
-### HTTP to HTTPS Redirect
-
-```nginx
-server {
-    listen 80;
-    server_name gateway.example.com;
-    return 301 https://$host$request_uri;
-}
-```
-
-## Caddy Configuration
-
-Caddy automatically manages HTTPS certificates, making the configuration much simpler:
-
-```caddyfile
-gateway.example.com {
-    reverse_proxy 127.0.0.1:8090
-
-    # Caddy handles WebSocket upgrade automatically — no extra config needed
-    # But you can explicitly set timeouts
-    reverse_proxy /ws* 127.0.0.1:8090 {
-        transport http {
-            keepalive 3600s
-        }
-    }
-}
-```
-
-!!! tip "Caddy Advantages"
-    Caddy automatically obtains and renews TLS certificates from Let's Encrypt, and handles WebSocket protocol upgrades without additional Upgrade/Connection header configuration. For simple deployments, Caddy is the lower-maintenance choice.
-
-## Required Forwarded Headers
-
-Regardless of which reverse proxy you use, the following headers must be forwarded correctly:
-
-| Header | Purpose | Example Value |
-|--------|---------|---------------|
-| `Host` | Original hostname for allowed_hosts validation | `gateway.example.com` |
-| `X-Forwarded-For` | Client real IP for rate limiting and audit | `203.0.113.50` |
-| `X-Forwarded-Proto` | Original protocol for generating correct redirect URLs | `https` |
-| `Upgrade` | WebSocket protocol upgrade | `websocket` |
-| `Connection` | Used with Upgrade | `upgrade` |
-
-!!! warning "X-Forwarded-For Trust Chain"
-    Gateway needs to correctly identify the client's real IP for rate limiting and audit logging. Ensure each layer in the proxy chain correctly appends to `X-Forwarded-For`, and configure Gateway with trusted proxy IP ranges.
-
-## WebSocket Considerations
-
-### Timeouts and Keepalive
-
-- Proxy layer `read_timeout` should exceed Gateway's ping interval (default 30 seconds)
-- Recommend setting to 3600 seconds to support long-idle connections
-- Gateway periodically sends WebSocket ping frames to maintain connection liveness
-
-### Buffering
-
-```nginx
-# Disable proxy buffering to reduce streaming output latency
-proxy_buffering off;
-```
-
-### Connection Limits
-
-```nginx
-# Limit WebSocket concurrent connections per IP
-limit_conn_zone $binary_remote_addr zone=ws_conn:10m;
-
-location /ws/ {
-    limit_conn ws_conn 10;
-    # ... other config
-}
-```
-
-## Gateway-Side Configuration
-
-### allowed_hosts
-
-When Gateway is behind a reverse proxy, configure `allowed_hosts` to match the Host header forwarded by the proxy:
-
-```yaml
-gateway:
-  auth:
-    allowed_hosts:
-      - "gateway.example.com"
-      - "gateway.internal.example.com"  # internal domain (if applicable)
-```
-
-!!! warning "Loopback Detection Bypass"
-    When Gateway is behind a reverse proxy, all requests will appear to originate from `127.0.0.1` (the proxy's address). This means the loopback exemption will apply to all requests. You must:
-    
-    1. Configure `allowed_hosts` to strictly limit allowed Host headers
-    2. Use token authentication for sensitive endpoints rather than relying on loopback exemption
-    3. Ensure the proxy layer itself has appropriate access controls
-
-### allowed_origins
-
-When using a custom domain, update the CORS configuration to match the actual access domain:
-
-```yaml
-gateway:
-  auth:
-    allowed_origins:
-      - "https://gateway.example.com"
-      - "https://dashboard.example.com"
-```
-
-## Health Check Endpoint
-
-The `/api/v1/health` endpoint can be used for load balancer health probes. If
-`gateway.api_prefix` is changed, use the same prefix here:
-
-```nginx
-# nginx upstream health check (requires nginx plus or third-party module)
-upstream echo_gateway {
-    server 127.0.0.1:8090;
-    # health_check uri=/api/v1/health interval=10s;
-}
-```
-
-For Kubernetes or cloud load balancers:
-
-```yaml
-# Kubernetes Ingress health check annotation example
-annotations:
-  nginx.ingress.kubernetes.io/health-check-path: /api/v1/health
-  nginx.ingress.kubernetes.io/health-check-interval: "10"
-```
-
-!!! tip "Health Check Frequency"
-    A health check interval of 10-30 seconds is recommended. Overly frequent checks add log noise but have no material impact on Gateway performance.
-
-## Complete Deployment Example
-
-Here is a typical production deployment configuration combination:
-
-**Gateway configuration (config.yaml):**
+## Gateway configuration
 
 ```yaml
 gateway:
   enabled: true
-  host: "127.0.0.1"  # Listen only on localhost, forwarded by proxy
+  host: "127.0.0.1"
   port: 8090
   auth:
     mode: "allowlist"
-    allowed_users:
-      - "telegram:123456"
-      - "wechat:wx_admin"
-    api_tokens:
-      - "tk-external-service-001"
-    admin_tokens:
-      - "atk-ops-team-master"
-    allowed_hosts:
-      - "gateway.example.com"
-    allowed_origins:
-      - "https://dashboard.example.com"
+    api_tokens: ["replace-with-a-random-token"]
+    allowed_hosts: ["gateway.example.com"]
+    allowed_origins: ["https://gateway.example.com"]
 ```
 
-**Nginx configuration highlights:**
+`allowed_hosts` matches the `Host` header forwarded by the proxy; include the domain used by browsers. `allowed_origins` lists allowed browser Origins and does not disable cross-site request checks. `0.0.0.0` and `::` are not valid Host entries. Configure `allowed_users` for actual users or use pairing mode; API tokens and user authorization are separate checks.
+
+`echo-agent run` starts the Gateway when `gateway.enabled: true`. Alternatively, run `echo-agent gateway` separately. Make sure the proxy target port matches `gateway.port`.
+
+## nginx
+
+Place the `map` and `server` blocks in nginx's `http` context. A single `location` proxies HTTP, `/ws`, and `/ws/dashboard`.
 
 ```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
     server_name gateway.example.com;
-    
-    # TLS config omitted...
-    
+    ssl_certificate     /etc/ssl/certs/gateway.example.com.pem;
+    ssl_certificate_key /etc/ssl/private/gateway.example.com.key;
+
     location / {
         proxy_pass http://127.0.0.1:8090;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    
-    location /ws {
-        proxy_pass http://127.0.0.1:8090;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
     }
 }
 ```
 
-## On X-Forwarded-For
+Replace the certificate paths with real files. Set `proxy_read_timeout` for the expected idle connection time. The Gateway sends WebSocket heartbeat frames every 30 seconds by default; `gateway.ws_heartbeat_seconds` controls this interval.
 
-The gateway has no `trusted_proxies` setting and does not derive the client IP from `X-Forwarded-For`, `X-Real-IP` or any other forwarded header. Every trust decision reads the real TCP peer address (the socket's `peername`), never `request.remote` and never a request header.
+## Caddy
 
-This is deliberate: forwarded headers are client-controlled, so basing a "this came from localhost" verdict on one would let any remote caller forge local trust by setting a header. The trade-off is that behind a reverse proxy the peer address the gateway sees is the proxy's own.
+```caddyfile
+gateway.example.com {
+    reverse_proxy 127.0.0.1:8090
+}
+```
 
-Two consequences worth planning for:
+Caddy's `reverse_proxy` handles HTTP and WebSocket traffic. Certificate acquisition depends on the domain and Caddy deployment configuration.
 
-- **The loopback exemption applies to the proxy, not the end user.** With proxy and gateway on the same host, the gateway sees a loopback peer, so every request arriving through the proxy inherits local trust. Such a deployment must authenticate at the proxy layer; the gateway's loopback check cannot distinguish users.
-- **Audit logs record the proxy's address.** If you need end-user IPs, log them at the reverse proxy — the gateway's logs cannot supply them.
+## Client addresses and authentication
 
-Also configure `gateway.auth.allowed_hosts` with the proxy's public domain: bound to a non-loopback address, a list with no usable entry makes every admin endpoint (sessions, config, memory writes, tasks, cron, knowledge) reject browser requests. Note that wildcard addresses (`0.0.0.0`, `::`) are not usable entries — listing one is the same as listing nothing.
+The Gateway has no `trusted_proxies` setting. It does not use `X-Forwarded-For` or `X-Real-IP` to identify clients or grant local trust; those decisions use the actual TCP peer address. Rate limiting uses `platform:chat_id` buckets, not client IP buckets.
 
-## Related Documentation
+When the proxy connects over `127.0.0.1`, the Gateway sees the proxy as the loopback peer. Local origin may pass the user allowlist check during message ingestion, but API-token checks, platform identity checks, and rate limiting still apply. Do not treat the loopback peer as the end user's identity. Enforce per-user or per-IP access at the proxy when needed, and record client IPs there.
+
+The proxy must preserve client authentication headers. By default the Gateway reads `X-Echo-Agent-Token` and also accepts `Authorization: Bearer <token>`. Browser administration also checks Host and Origin; `allowed_hosts` must contain the public domain forwarded by the proxy.
+
+Probe `https://gateway.example.com/api/v1/health`. It returns `503` for `unhealthy` status and `200` otherwise; configure probe frequency and failure thresholds in the deployment platform.
+
+## Related documentation
 
 - [Gateway Overview](index.en.md)
 - [Authentication Details](authentication.en.md)

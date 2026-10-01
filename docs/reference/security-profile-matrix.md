@@ -57,7 +57,7 @@
 1. **显式拒绝** — 工具名在 `tools.deny` 中，直接拒绝。这一层优先级最高，无法被任何配置豁免。
 2. **白名单** — 若配置了 `tools.allow`，则只有其中的工具通过，档位不再参与判定；否则由 `tools.profile` 的档位白名单或 `tools.also_allow` 决定。
 3. **运行形态拒绝** — 按 `security.profile` 追加的工具名与能力规则拒绝。工具名同时出现在 `tools.allow` 或 `tools.also_allow` 中时可豁免本层。
-4. **网络策略** — 当 `execution.network_policy` 为 `deny` 时，拒绝 `web_fetch`、`web_search` 以及任何带 `network.outbound` 能力的工具。`network_policy` 默认即为 `deny`。
+4. **网络策略** — 当 `execution.network_policy` 为 `deny` 时，拒绝 `web_fetch`、`web_search` 以及任何带 `network.outbound` 能力的工具。schema 默认值为 `deny`，包内默认配置覆盖为 `allow`。
 
 被拒绝的工具不会报错，而是不出现在模型的工具列表中，同时以 INFO 级别记录一条 `Tool policy skipped N tools` 日志。排查"工具没被调用"时应先看这条日志。
 
@@ -70,7 +70,7 @@
 | `tools.also_allow` | list[str] | `[]` | 在档位之外追加放通，并可豁免运行形态拒绝 |
 | `tools.profile` | 枚举 | `full` | 档位白名单 |
 | `security.profile` | 枚举 | `personal_cli` | 运行形态基线 |
-| `execution.network_policy` | `allow` / `deny` / `restricted` | `deny` | 出站网络策略 |
+| `execution.network_policy` | `allow` / `deny` / `restricted` | `allow`（包内）；`deny`（schema） | 出站网络策略 |
 
 ## 审批
 

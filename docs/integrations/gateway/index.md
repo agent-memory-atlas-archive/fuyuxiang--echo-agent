@@ -11,7 +11,7 @@ Echo Agent Gateway 是基于 aiohttp 构建的 HTTP/WebSocket 网关服务器，
 | 认证与速率限制 | 多模式认证 + 令牌桶限流 |
 | 跨平台投递路由 | 根据目标平台自动选择投递通道 |
 | 渐进式消息编辑 | 支持流式输出时的消息实时更新 |
-| 健康监控 | 提供 `/health` 端点用于存活探针 |
+| 健康监控 | 提供 `{api_prefix}/health` 端点（默认 `/api/v1/health`）用于健康探测 |
 
 ## 架构组成
 
@@ -65,10 +65,10 @@ Gateway 在 `gateway/api/` 目录下提供以下 REST API 模块：
 ## 健康检查
 
 ```
-GET /health
+GET /api/v1/health
 ```
 
-返回 `200 OK` 表示服务正常运行，适配 Kubernetes liveness/readiness probe 和负载均衡器健康探测。
+健康状态不是 `unhealthy` 时返回 `200`，为 `unhealthy` 时返回 `503`；响应体为 JSON。可用作探针地址，具体探针策略应按部署环境设置。
 
 ## 速率限制
 
@@ -94,6 +94,7 @@ gateway:
     api_tokens: ["token-xxx"]
     admin_tokens: ["admin-xxx"]
     allowed_origins: ["https://my-dashboard.example.com"]
+    allowed_hosts: ["my-dashboard.example.com"]
 ```
 
 !!! warning "生产环境注意"
@@ -101,22 +102,22 @@ gateway:
 
 ## 默认监听地址
 
-Gateway 默认监听 `127.0.0.1:58123`。端口用 `gateway.port` 配置，主机用 `gateway.host`；两者也可通过 `ECHO_AGENT_GATEWAY_PORT`、`ECHO_AGENT_GATEWAY_HOST` 环境变量覆盖（环境变量前缀为 `ECHO_AGENT_`，路径中的层级用下划线连接）。
+Gateway 默认监听 `127.0.0.1:58123`。端口用 `gateway.port` 配置，主机用 `gateway.host`；两者也可通过 `ECHO_AGENT_GATEWAY__PORT`、`ECHO_AGENT_GATEWAY__HOST` 环境变量覆盖（配置路径层级使用双下划线）。
 
 `gateway.port` 设为 `0` 时由系统动态分配，实际端口写入 `workspace/.echo-agent/gateway.json`。
 
 ## 快速启动
 
-Gateway 是**独立进程**，不随其他命令自动启动：
+可以单独以前台进程启动 Gateway，也可以将其注册为系统服务：
 
 ```bash
 echo-agent gateway              # 前台启动
 echo-agent gateway install      # 注册为后台常驻服务
 ```
 
-`echo-agent run` 是自带 agent 的交互式会话，不会顺带起网关；反过来，网关运行后用 `echo-agent cli` 以瘦客户端接入。两者共享同一份状态，但生命周期彼此独立。
+`echo-agent run` 运行完整 Agent；配置 `gateway.enabled: true` 时，它也会启动 Gateway。`echo-agent gateway` 会在当前进程中启用 Gateway，无须在配置中预先设置 `gateway.enabled`。Gateway 运行后，可用 `echo-agent cli` 作为瘦客户端连接。
 
-启动后访问 `http://127.0.0.1:58123/health` 验证服务状态。
+使用默认监听地址和 API 前缀时，访问 `http://127.0.0.1:58123/api/v1/health` 检查状态。
 
 ## 相关文档
 

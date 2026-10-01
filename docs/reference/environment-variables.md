@@ -25,9 +25,9 @@ export ECHO_AGENT_SECURITY__PROFILE=daemon
 
 ### 可用变量取决于 schema
 
-由于映射是机械推导的，可用变量就是配置树上的全部字段，本页不再逐一罗列 —— 请查[配置参考](configuration.md)，把其中的配置路径按上述规则转写即可。顶层配置节共 34 个：
+由于映射是机械推导的，可用变量就是配置树上的全部字段，本页不再逐一罗列 —— 请查[配置参考](configuration.md)，把其中的配置路径按上述规则转写即可。当前顶层配置字段共 35 个：
 
-`a2a`、`agent`、`bus`、`channels`、`checkpoint`、`circuit_breaker`、`compression`、`cost`、`credentials`、`evaluation`、`evolution`、`execution`、`gateway`、`knowledge`、`media_understanding`、`memory`、`models`、`multi_agent`、`observability`、`permissions`、`planning`、`plugins`、`rate_limit`、`runtime`、`scheduler`、`security`、`session`、`skills`、`spill`、`storage`、`tools`、`ui`、`validation`、`workspace`
+`a2a`、`agent`、`artifacts`、`bus`、`channels`、`checkpoint`、`circuit_breaker`、`compression`、`cost`、`credentials`、`evaluation`、`evolution`、`execution`、`gateway`、`knowledge`、`media_understanding`、`memory`、`models`、`multi_agent`、`observability`、`permissions`、`planning`、`plugins`、`rate_limit`、`runtime`、`scheduler`、`security`、`session`、`skills`、`spill`、`storage`、`tools`、`ui`、`validation`、`workspace`
 
 常用示例：
 
@@ -39,7 +39,7 @@ export ECHO_AGENT_SECURITY__PROFILE=daemon
 | `tools.profile` | `ECHO_AGENT_TOOLS__PROFILE` | 工具档位，默认 `full` |
 | `security.profile` | `ECHO_AGENT_SECURITY__PROFILE` | 运行形态，默认 `personal_cli` |
 | `permissions.approval.mode` | `ECHO_AGENT_PERMISSIONS__APPROVAL__MODE` | 审批模式，默认 `smart` |
-| `execution.network_policy` | `ECHO_AGENT_EXECUTION__NETWORK_POLICY` | 出站网络策略，默认 `deny` |
+| `execution.network_policy` | `ECHO_AGENT_EXECUTION__NETWORK_POLICY` | 出站网络策略，包内默认配置为 `allow`（schema 默认 `deny`） |
 | `models.default_model` | `ECHO_AGENT_MODELS__DEFAULT_MODEL` | 默认模型 |
 
 ### 类型转换
@@ -65,7 +65,7 @@ schema 声明为列表或字典的配置项，环境变量值按 JSON 解析：
 
 ```bash
 export ECHO_AGENT_GATEWAY__AUTH__ADMIN_TOKENS='["ephemeral-token"]'
-export ECHO_AGENT_TOOLS__DENY='["shell", "process"]'
+export ECHO_AGENT_TOOLS__DENY='["exec", "process"]'
 export ECHO_AGENT_MODELS__MODEL_WINDOWS='{"gpt-4": 128000}'
 ```
 
