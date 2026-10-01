@@ -97,6 +97,9 @@ class ToolExecutionContext:
     # inbound event but resumes the original delivery checkpoint; an unrelated
     # later request leaves this empty/new and deliberately sends again.
     artifact_intent_id: str = ""
+    # Per-turn progress state. Tools may record a milestone; the heartbeat alone
+    # decides whether and how to send it to the user.
+    activity: Any = None
 
 
 def build_idempotency_key(trace_id: str, tool_name: str, index: int, params: Mapping[str, Any]) -> str:

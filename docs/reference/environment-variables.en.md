@@ -251,6 +251,7 @@ provider either reports a missing key or allows keyless access.
 | `tools.exec.enabled` | `ECHO_AGENT_TOOLS__EXEC__ENABLED` | type | True |
 | `tools.exec.max_output_chars` | `ECHO_AGENT_TOOLS__EXEC__MAX_OUTPUT_CHARS` | type | 2000000 |
 | `tools.exec.host` | `ECHO_AGENT_TOOLS__EXEC__HOST` | _LiteralGenericAlias | 'sandbox' |
+| `tools.exec.env_allowlist` | `ECHO_AGENT_TOOLS__EXEC__ENV_ALLOWLIST` | GenericAlias | PydanticUndefined |
 | `tools.exec.security` | `ECHO_AGENT_TOOLS__EXEC__SECURITY` | _LiteralGenericAlias | 'allowlist' |
 | `tools.exec.ask` | `ECHO_AGENT_TOOLS__EXEC__ASK` | _LiteralGenericAlias | 'on_miss' |
 | `tools.exec.safe_bins` | `ECHO_AGENT_TOOLS__EXEC__SAFE_BINS` | GenericAlias | PydanticUndefined |

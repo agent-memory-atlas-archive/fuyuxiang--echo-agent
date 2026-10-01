@@ -53,6 +53,7 @@ def discover_tools(
             executor=executor,
             exec_policy=config.tools.exec,
             network_policy=config.execution.network_policy,
+            env_allowlist=config.tools.exec.env_allowlist,
         ))
     # spill 闸门传给每个"按路径授权"的读取入口。少传一个就留一个越权取回面,
     # 故这里集中传一次,不让各调用点自己决定。
@@ -149,6 +150,7 @@ def discover_tools(
             timeout_seconds=config.tools.code_exec.timeout_seconds,
             exec_policy=config.tools.exec,
             network_policy=config.execution.network_policy,
+            env_allowlist=config.tools.exec.env_allowlist,
         ))
 
     if config.tools.exec.enabled:
@@ -157,6 +159,7 @@ def discover_tools(
             ws,
             exec_policy=config.tools.exec,
             network_policy=config.execution.network_policy,
+            env_allowlist=config.tools.exec.env_allowlist,
         ))
 
     # NOTE: spawn_task is NOT registered here. It needs the approval gate and

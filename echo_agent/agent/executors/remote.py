@@ -138,8 +138,7 @@ class ContainerExecutor(BaseExecutor):
             await self.setup()
 
         env_args = []
-        merged_env = self.inject_credentials({}, request.credentials)
-        merged_env.update(request.env)
+        merged_env = self.inject_credentials(dict(request.env), request.credentials)
         for k, v in merged_env.items():
             env_args.extend(["-e", f"{k}={v}"])
 
@@ -236,8 +235,7 @@ class RemoteExecutor(BaseExecutor):
         return cmd
 
     def _build_remote_command(self, request: ExecRequest) -> str:
-        merged_env = self.inject_credentials({}, request.credentials)
-        merged_env.update(request.env)
+        merged_env = self.inject_credentials(dict(request.env), request.credentials)
 
         env_prefix = " ".join(
             f"{shlex.quote(k)}={shlex.quote(v)}" for k, v in merged_env.items()

@@ -90,6 +90,15 @@ class TestBuildSkillEnv:
         assert env["HTTPS_PROXY"] == "http://proxy:3128"
         assert env["SSL_CERT_FILE"] == "/etc/ssl/custom.pem"
 
+    def test_authenticated_proxy_requires_explicit_declaration(self, monkeypatch):
+        monkeypatch.setenv("HTTPS_PROXY", "http://user:pass@proxy:3128")
+        assert "HTTPS_PROXY" not in build_skill_env("")
+        md = (
+            "---\nname: proxy\ndescription: d\nmetadata:\n  echo:\n"
+            "    requires:\n      env: HTTPS_PROXY\n---\nbody\n"
+        )
+        assert build_skill_env(md)["HTTPS_PROXY"] == "http://user:pass@proxy:3128"
+
     def test_declared_credential_is_forwarded(self, monkeypatch):
         monkeypatch.setenv("DEMO_TOKEN", "s3cr3t")
         env = build_skill_env(SKILL_WITH_ENV)

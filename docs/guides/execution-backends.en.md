@@ -119,10 +119,21 @@ The remaining `tools.exec` fields constrain the command itself:
 | `ask` | `on_miss` | When to request approval |
 | `max_output_chars` | `2000000` | Output truncation threshold |
 | `host` | `sandbox` | Executor used by this tool |
+| `env_allowlist` | `[]` | Ambient variable names passed explicitly to `exec`, `execute_code` and `process` |
 
 `safe_bins` defaults to read-only utilities such as `awk`, `cat`, `date`, `echo`, `find`, `grep`, `head`, `ls` and `pwd`.
 
 Constraints for `execute_code` live under `tools.code_exec`, with three fields: `enabled`, `allowed_languages` and `timeout_seconds`.
+
+Execution tools inherit only basic variables such as `PATH`, `HOME`, locale and TLS certificate paths, plus proxy URLs without credentials. To make a project variable available, allow its name in the configuration; its value is read from the service process environment rather than stored in the configuration:
+
+```yaml
+tools:
+  exec:
+    env_allowlist: [DATABASE_URL, PYTHONPATH]
+```
+
+The list applies to `exec`, `execute_code` and background `process` commands. Commands can read every listed variable, so include only values they need. Credentials explicitly injected for an execution request continue to use the existing authorization path.
 
 ## Comparison
 

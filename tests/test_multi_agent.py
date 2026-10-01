@@ -451,3 +451,63 @@ class TestWorkerToolFailureEarlyExit:
         # Executed only up to the threshold; later identical calls are blocked.
         assert executed == WorkerExecutor._REPEAT_BLOCK_THRESHOLD - 1
         assert result.iterations < 12
+
+
+class TestWorkerProgressCallback:
+    @pytest.mark.asyncio
+    async def test_on_progress_fires_at_start_and_iteration_and_tool(self):
+        provider = AsyncMock()
+        tc = MagicMock()
+        tc.id = "tc_1"
+        tc.name = "read_file"
+        tc.arguments = {}
+        tc.to_openai_format = MagicMock(return_value={
+            "id": "tc_1", "type": "function",
+            "function": {"name": "read_file", "arguments": "{}"},
+        })
+        r1 = MagicMock(finish_reason="tool_calls", content="", has_tool_calls=True,
+                       tool_calls=[tc], usage=None)
+        r2 = MagicMock(finish_reason="stop", content="done", has_tool_calls=False,
+                       usage=None)
+        provider.chat_with_retry = AsyncMock(side_effect=[r1, r2])
+
+        notes: list[str] = []
+
+        def on_progress(progress) -> None:
+            notes.append(progress)
+
+        executor = WorkerExecutor(provider=provider)
+        result = await executor.run(
+            task_index=3,
+            goal="read it",
+            tool_defs=[{"type": "function", "function": {"name": "read_file"}}],
+            tool_executor=AsyncMock(return_value="ok"),
+            max_iterations=5,
+            on_progress=on_progress,
+        )
+
+        assert result.status == "completed"
+        assert any(n.kind == "started" and n.task_index == 3 for n in notes)
+        assert any(n.kind == "iteration" and n.iteration == 1 for n in notes)
+        assert any(n.kind == "tool" and n.tool_name == "read_file" for n in notes)
+
+    @pytest.mark.asyncio
+    async def test_progress_sink_failure_does_not_fail_run(self):
+        provider = AsyncMock()
+        r = MagicMock(finish_reason="stop", content="done", has_tool_calls=False,
+                      usage=None)
+        provider.chat_with_retry = AsyncMock(return_value=r)
+
+        def broken(progress) -> None:
+            raise RuntimeError("sink down")
+
+        executor = WorkerExecutor(provider=provider)
+        result = await executor.run(
+            task_index=0,
+            goal="x",
+            tool_defs=[],
+            tool_executor=AsyncMock(),
+            max_iterations=3,
+            on_progress=broken,
+        )
+        assert result.status == "completed"

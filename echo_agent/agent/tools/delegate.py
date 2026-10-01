@@ -18,7 +18,7 @@ from loguru import logger
 from echo_agent.agent.multi_agent.audit import DispatchAuditLog
 from echo_agent.agent.multi_agent.models import WorkerProfile, WorkerResult, WorkerToolOutcome
 from echo_agent.agent.multi_agent.registry import WorkerRegistry
-from echo_agent.agent.multi_agent.runtime import WorkerExecutor
+from echo_agent.agent.multi_agent.runtime import WorkerExecutor, WorkerProgress
 from echo_agent.tools import Tool, ToolExecutionContext, ToolResult
 from echo_agent.models.provider import LLMProvider, ToolCallRequest
 
@@ -221,6 +221,7 @@ class DelegateTool(Tool):
         max_parallel_workers: int = 4,
         max_worker_iterations: int = 12,
         default_model: str = "",
+        progress_enabled: bool = True,
     ):
         self._provider = provider
         self._tool_registry = tool_registry
@@ -232,6 +233,7 @@ class DelegateTool(Tool):
         self._max_parallel = max_parallel_workers
         self._max_worker_iterations = max_worker_iterations
         self._default_model = default_model
+        self._progress_enabled = progress_enabled
         self._executor = WorkerExecutor(
             provider=provider,
             model_router=model_router,
@@ -259,6 +261,18 @@ class DelegateTool(Tool):
 
         available_tools = set(self._tool_registry.ready_tool_names) - WORKER_BLOCKED_TOOLS
         started = time.monotonic()
+        total = len(tasks)
+        activity = ctx.activity if ctx and self._progress_enabled else None
+
+        def _record_progress(progress: WorkerProgress) -> None:
+            if activity is not None:
+                activity.report_worker_progress(
+                    task_index=progress.task_index,
+                    total=total,
+                    kind=progress.kind,
+                    iteration=progress.iteration,
+                    tool_name=progress.tool_name,
+                )
 
         workers = []
         for i, task_spec in enumerate(tasks):
@@ -283,6 +297,7 @@ class DelegateTool(Tool):
                 tool_executor=tool_executor,
                 max_iterations=max_iter,
                 timeout_seconds=self.timeout_seconds / max(1, len(tasks)),
+                on_progress=_record_progress if activity is not None else None,
             ))
 
         results = await asyncio.gather(*workers, return_exceptions=True)

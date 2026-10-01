@@ -1356,6 +1356,7 @@ class InferenceStage:
                 reply_to_id=event.reply_to_id or "",
                 inbound_event_id=event.event_id,
                 artifact_intent_id=ctx.artifact_intent_id,
+                activity=ctx.activity,
                 # Trust facts travel with the context so a nested call (a
                 # delegate/spawn worker) can be gated on them. Read from the
                 # typed InboundEvent fields only — never metadata, which external

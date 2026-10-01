@@ -503,8 +503,36 @@ class SessionManager:
                     logger.debug("Error during storage session cleanup for {}: {}", item.get("key", ""), e)
                     continue
             return count
+        # File-mode scan reads every .jsonl's metadata line — disk I/O that must
+        # not sit on the gateway's loop thread with a large session inventory.
+        for data, stem in await asyncio.to_thread(self._scan_session_files_sync):
+            try:
+                updated = datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else now
+                status = data.get("status") or "active"
+                key = data.get("key") or stem.replace("_", ":", 1)
+                if status == "active" and (now - updated) > self._expiry_delta:
+                    await self.expire_session(key)
+                    count += 1
+                elif status == "expired" and (now - updated) > self._archive_delta:
+                    await self.archive_session(key)
+                    count += 1
+            except Exception as e:
+                logger.debug("Error during session cleanup for {}: {}", stem, e)
+                continue
+        return count
+
+    def _scan_session_files_sync(self) -> list[tuple[dict[str, Any], str]]:
+        """Read every session file's metadata line, off the event loop.
+
+        Returns ``(metadata_summary, stem)`` pairs. ``stem`` is the encoded
+        filename without its extension; consumers decode it to a session key
+        themselves (cleanup uses the legacy lossy ``stem.replace("_", ":", 1)``,
+        listing keeps the encoded stem as the fallback) — the metadata's own
+        ``key`` field is the authority when present.
+        """
+        rows: list[tuple[dict[str, Any], str]] = []
         for path in self.sessions_dir.glob("*.jsonl"):
-            key = path.stem
+            stem = path.stem
             try:
                 with open(path, encoding="utf-8") as f:
                     first = f.readline().strip()
@@ -513,71 +541,71 @@ class SessionManager:
                 data = json.loads(first)
                 if data.get("_type") != "metadata":
                     continue
-                updated = datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else now
-                status = data.get("status", "active")
-                key = data.get("key", path.stem.replace("_", ":", 1))
-
-                if status == "active" and (now - updated) > self._expiry_delta:
-                    await self.expire_session(key)
-                    count += 1
-                elif status == "expired" and (now - updated) > self._archive_delta:
-                    await self.archive_session(key)
-                    count += 1
+                # The metadata line may contain a large free-form metadata
+                # object. Listings and cleanup only need these fields; do not
+                # retain every full object for a large session inventory.
+                rows.append(({
+                    "key": data.get("key"),
+                    "status": data.get("status"),
+                    "created_at": data.get("created_at"),
+                    "updated_at": data.get("updated_at"),
+                }, stem))
             except Exception as e:
-                logger.debug("Error during session cleanup for {}: {}", key, e)
+                logger.debug("Error reading session metadata for {}: {}", stem, e)
                 continue
-        return count
+        return rows
 
     async def list_sessions_async(self) -> list[dict[str, Any]]:
         if self._storage and hasattr(self._storage, "list_sessions"):
             sessions = await self._storage.list_sessions()
             return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
-        return self.list_sessions()
+        if self._storage:
+            return self._cached_session_listing()
+        rows = await asyncio.to_thread(self._scan_session_files_sync)
+        return self._sessions_from_rows(rows)
+
+    def _cached_session_listing(self) -> list[dict[str, Any]]:
+        return sorted(
+            [
+                {
+                    "key": session.key,
+                    "status": session.status,
+                    "created_at": session.created_at.isoformat(),
+                    "updated_at": session.updated_at.isoformat(),
+                    "metadata": session.metadata,
+                    "message_count": len(session.messages),
+                }
+                for session in self._cache.values()
+            ],
+            key=lambda x: x.get("updated_at", ""),
+            reverse=True,
+        )
+
+    @staticmethod
+    def _sessions_from_rows(rows: list[tuple[dict[str, Any], str]]) -> list[dict[str, Any]]:
+        sessions = [
+            {
+                "key": data.get("key") or stem,
+                "status": data.get("status") or "active",
+                "created_at": data.get("created_at"),
+                "updated_at": data.get("updated_at"),
+            }
+            for data, stem in rows
+        ]
+        return sorted(sessions, key=lambda x: x.get("updated_at") or "", reverse=True)
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """Synchronous listing. With SQLite storage and a running event loop
         this can only see the in-memory cache (≤ max_cache_size entries) —
         prefer ``list_sessions_async`` for a complete listing."""
         if self._storage:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                return asyncio.run(self.list_sessions_async())
-            if loop.is_running():
-                return sorted(
-                    [
-                        {
-                            "key": session.key,
-                            "status": session.status,
-                            "created_at": session.created_at.isoformat(),
-                            "updated_at": session.updated_at.isoformat(),
-                            "metadata": session.metadata,
-                            "message_count": len(session.messages),
-                        }
-                        for session in self._cache.values()
-                    ],
-                    key=lambda x: x.get("updated_at", ""),
-                    reverse=True,
-                )
-        sessions = []
-        for path in self.sessions_dir.glob("*.jsonl"):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    first = f.readline().strip()
-                if not first:
-                    continue
-                data = json.loads(first)
-                if data.get("_type") == "metadata":
-                    sessions.append({
-                        "key": data.get("key", path.stem),
-                        "status": data.get("status", "active"),
-                        "created_at": data.get("created_at"),
-                        "updated_at": data.get("updated_at"),
-                    })
-            except Exception as e:
-                logger.debug("Failed to read session file {}: {}", path.name, e)
-                continue
-        return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)
+            if hasattr(self._storage, "list_sessions"):
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    return asyncio.run(self.list_sessions_async())
+            return self._cached_session_listing()
+        return self._sessions_from_rows(self._scan_session_files_sync())
 
     async def invalidate(self, key: str) -> None:
         async with self._lock:

@@ -8,9 +8,10 @@ from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
 
-from echo_agent.agent.executors.base import BaseExecutor, ExecRequest
+from echo_agent.agent.executors.base import BaseExecutor, ExecRequest, prepend_interpreter_bin
 from echo_agent.agent.proc_lifecycle import communicate_owned, spawn_shell
 from echo_agent.tools import Tool, ToolExecutionContext, ToolResult
+from echo_agent.security.exec_env import build_exec_env, selected_ambient_env
 from echo_agent.security.guards import evaluate_code_execution
 
 
@@ -50,6 +51,7 @@ class CodeExecTool(Tool):
         timeout_seconds: int = 60,
         exec_policy: Any | None = None,
         network_policy: str = "allow",
+        env_allowlist: list[str] | None = None,
     ):
         self._workspace = Path(workspace)
         self._executor = executor
@@ -58,6 +60,7 @@ class CodeExecTool(Tool):
         self.timeout_seconds = timeout_seconds
         self._exec_policy = exec_policy
         self._network_policy = network_policy
+        self._env_allowlist = tuple(env_allowlist or ())
         enum = [lang for lang in _RUNNERS if lang in self._allowed_languages]
         self.parameters = {
             "type": "object",
@@ -97,13 +100,15 @@ class CodeExecTool(Tool):
             return ToolResult(success=False, error=f"Code blocked by execution policy: {decision.reason}")
 
         try:
+            tool_env = selected_ambient_env(self._env_allowlist)
+            tool_env["WORKSPACE"] = str(self._workspace)
             if self._executor:
                 response = await self._executor.execute(ExecRequest(
                     command=command,
                     cwd=str(self._workspace),
                     timeout=timeout,
                     stdin=code,
-                    env={"WORKSPACE": str(self._workspace)},
+                    env=tool_env,
                     credentials=ctx.credentials if ctx else {},
                 ))
                 out = response.stdout
@@ -117,6 +122,10 @@ class CodeExecTool(Tool):
                     stderr=asyncio.subprocess.PIPE,
                     stdin=asyncio.subprocess.PIPE,
                     cwd=str(self._workspace),
+                    env=prepend_interpreter_bin(build_exec_env(
+                        credentials=ctx.credentials if ctx else {},
+                        extra=tool_env,
+                    )),
                 )
                 stdout, stderr = await communicate_owned(
                     proc, code.encode(), timeout=timeout,

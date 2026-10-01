@@ -783,6 +783,7 @@ class AgentLoop:
             max_parallel_workers=self.config.multi_agent.max_parallel_workers,
             max_worker_iterations=self.config.multi_agent.max_iterations,
             default_model=self._default_model,
+            progress_enabled=self.config.channels.send_progress,
         )
         self.tools.register(delegate_tool)
 

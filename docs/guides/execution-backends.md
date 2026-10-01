@@ -119,10 +119,21 @@ tools:
 | `ask` | `on_miss` | 何时请求审批 |
 | `max_output_chars` | `2000000` | 输出截断阈值 |
 | `host` | `sandbox` | 该工具使用的执行器 |
+| `env_allowlist` | `[]` | 显式传入 `exec`、`execute_code`、`process` 的本机环境变量名 |
 
 `safe_bins` 默认包含 `awk`、`cat`、`date`、`echo`、`find`、`grep`、`head`、`ls`、`pwd` 等只读类命令。
 
 `execute_code` 的约束在 `tools.code_exec`，含 `enabled`、`allowed_languages`、`timeout_seconds` 三项。
+
+执行工具默认只继承 `PATH`、`HOME`、语言、TLS 证书路径等基础变量，以及不带账号密码的代理地址。需要项目变量时，在配置中按名称授权；变量值仍从服务进程环境读取，不写进配置文件：
+
+```yaml
+tools:
+  exec:
+    env_allowlist: [DATABASE_URL, PYTHONPATH]
+```
+
+名单同时作用于 `exec`、`execute_code` 和后台 `process`。这些工具运行的命令可读取获授权变量，因而只应列出确实需要的名称。执行请求中显式注入的凭据仍按原有授权机制传入。
 
 ## 执行器对比
 

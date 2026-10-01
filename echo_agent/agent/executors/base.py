@@ -23,6 +23,7 @@ from echo_agent.agent.proc_lifecycle import (
     communicate_owned,
     spawn_shell,
 )
+from echo_agent.security.exec_env import build_exec_env
 from echo_agent.security.guards import command_uses_network
 
 
@@ -121,9 +122,8 @@ class LocalExecutor(BaseExecutor):
         if self._network_policy == "deny" and command_uses_network(request.command):
             return ExecResponse(success=False, stderr="Network access is denied by execution policy", return_code=-1, executor=self.name)
         cwd = request.cwd or self._workspace
-        env = prepend_interpreter_bin(dict(os.environ))
-        env = self.inject_credentials(env, request.credentials)
-        env.update(request.env)
+        env = build_exec_env(credentials=request.credentials, extra=request.env)
+        env = prepend_interpreter_bin(env)
         start = datetime.now()
 
         try:
@@ -216,8 +216,8 @@ class SandboxExecutor(BaseExecutor):
         if self._network_policy == "deny" and command_uses_network(request.command):
             return ExecResponse(success=False, stderr="Network access is denied by execution policy", return_code=-1, executor=self.name)
         cwd = str(self._resolve_cwd(request.cwd))
-        env = self.inject_credentials({"HOME": cwd, "TMPDIR": cwd}, request.credentials)
-        env.update(request.env)
+        env = {"HOME": cwd, "TMPDIR": cwd, **request.env}
+        env = self.inject_credentials(env, request.credentials)
         env["PATH"] = prepend_interpreter_bin(dict(os.environ))["PATH"]
 
         start = datetime.now()

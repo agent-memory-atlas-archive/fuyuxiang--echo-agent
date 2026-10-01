@@ -14,7 +14,9 @@ from echo_agent.agent.proc_lifecycle import (
     spawn_shell,
     terminate_tree,
 )
+from echo_agent.agent.executors.base import prepend_interpreter_bin
 from echo_agent.tools import Tool, ToolExecutionContext, ToolResult
+from echo_agent.security.exec_env import build_exec_env, selected_ambient_env
 from echo_agent.security.guards import evaluate_shell_command
 
 
@@ -46,10 +48,14 @@ class ProcessTool(Tool):
     # not our children, so there is nothing to await — only existence to probe.
     _GROUP_WAIT_INTERVAL = 0.2
 
-    def __init__(self, workspace: str, *, exec_policy: Any | None = None, network_policy: str = "allow"):
+    def __init__(
+        self, workspace: str, *, exec_policy: Any | None = None,
+        network_policy: str = "allow", env_allowlist: list[str] | None = None,
+    ):
         self._workspace = workspace
         self._exec_policy = exec_policy
         self._network_policy = network_policy
+        self._env_allowlist = tuple(env_allowlist or ())
         # Per-instance process table — a module-level global would let one Agent
         # instance's ProcessTool see and stop another's background processes.
         self._processes: dict[str, dict[str, Any]] = {}
@@ -88,6 +94,10 @@ class ProcessTool(Tool):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=self._workspace,
+            env=prepend_interpreter_bin(build_exec_env(
+                credentials=ctx.credentials if ctx else {},
+                extra={**selected_ambient_env(self._env_allowlist), "WORKSPACE": self._workspace},
+            )),
         )
         pid = f"proc_{proc.pid}"
         # Reclaim before inserting, so the cap counts entries already in the

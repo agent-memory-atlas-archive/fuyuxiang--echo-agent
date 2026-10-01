@@ -26,48 +26,11 @@ import os
 from loguru import logger
 
 from echo_agent.agent.executors.base import prepend_interpreter_bin
+from echo_agent.security.exec_env import safe_base_env
 from echo_agent.skills.store import parse_frontmatter
 
-# Keys every subprocess needs to behave like a normal program: locate binaries,
-# find a home/temp dir, decode text, verify TLS, honor the operator's proxy.
-_INFRA_KEYS: tuple[str, ...] = (
-    "PATH",
-    "HOME",
-    "USER",
-    "LOGNAME",
-    "SHELL",
-    "TMPDIR",
-    "TEMP",
-    "TMP",
-    "TZ",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TERM",
-    # TLS trust stores — without these, requests/httpx fail to verify certs on
-    # installs that rely on certifi or a corporate bundle.
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "REQUESTS_CA_BUNDLE",
-    "CURL_CA_BUNDLE",
-    # Proxies: an operator behind an egress proxy has no other way to tell a
-    # skill script about it, and silently bypassing it looks like a hang.
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-    # Keep the child's Python behavior aligned with the parent's.
-    "PYTHONHASHSEED",
-    "PYTHONIOENCODING",
-    "PYTHONUTF8",
-    "VIRTUAL_ENV",
-    # Propagate the lazy-install kill switch: a script that shells out to the
-    # agent's own machinery must see the same policy the parent is under.
-    "ECHO_AGENT_DISABLE_LAZY_INSTALLS",
-)
-
+# The shared safe_base_env supplies process infrastructure: binary lookup,
+# home/temp dirs, locale, TLS roots, and unauthenticated proxies.
 # A skill may not request these by name through requires.env, however it asks.
 # Passing them would let a skill rewrite what the interpreter imports (and thus
 # execute code of its choosing on the next import) or re-point the agent's own
@@ -143,17 +106,13 @@ def declared_env_keys(skill_md: str) -> list[str]:
 def build_skill_env(skill_md: str = "", *, base: dict[str, str] | None = None) -> dict[str, str]:
     """Build the environment for a skill script subprocess.
 
-    Infrastructure keys from ``_INFRA_KEYS`` plus any credential keys the skill
+    Infrastructure keys from ``safe_base_env`` plus any credential keys the skill
     declared. PATH always leads with ``sys.executable``'s directory so a script
     that shells out to ``python3`` gets the agent's interpreter and therefore
     the venv its dependencies live in.
     """
     source = os.environ if base is None else base
-    env: dict[str, str] = {}
-    for key in _INFRA_KEYS:
-        value = source.get(key)
-        if value is not None:
-            env[key] = value
+    env = safe_base_env(source)
 
     for key in declared_env_keys(skill_md):
         value = source.get(key)

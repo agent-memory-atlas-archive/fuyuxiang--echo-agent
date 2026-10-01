@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from types import SimpleNamespace
 from pathlib import Path
@@ -13,6 +12,7 @@ from echo_agent.agent.executors.base import BaseExecutor, ExecRequest, prepend_i
 from echo_agent.agent.proc_lifecycle import communicate_owned, spawn_shell
 from echo_agent.tools import Tool, ToolExecutionContext, ToolResult
 from echo_agent.security.guards import evaluate_shell_command
+from echo_agent.security.exec_env import build_exec_env, selected_ambient_env
 from echo_agent.security.path_policy import check_cwd
 
 
@@ -48,6 +48,7 @@ class ShellTool(Tool):
         executor: BaseExecutor | None = None,
         exec_policy: Any | None = None,
         network_policy: str = "allow",
+        env_allowlist: list[str] | None = None,
     ):
         self._workspace = str(Path(workspace).resolve())
         self._allowed = allowed or []
@@ -56,6 +57,7 @@ class ShellTool(Tool):
         self._executor = executor
         self._exec_policy = exec_policy
         self._network_policy = network_policy
+        self._env_allowlist = tuple(env_allowlist or ())
 
     def _bound(self, text: str) -> str:
         """套采集上限。stderr 此前完全没套,而 return_code != 0 时它就是模型
@@ -124,12 +126,14 @@ class ShellTool(Tool):
                 cwd = self._resolve_cwd(cwd)
             except ValueError:
                 return ToolResult(success=False, error=f"cwd is outside workspace: {cwd}")
+            tool_env = selected_ambient_env(self._env_allowlist)
+            tool_env["WORKSPACE"] = self._workspace
             if self._executor:
                 response = await self._executor.execute(ExecRequest(
                     command=command,
                     cwd=cwd,
                     timeout=timeout,
-                    env={"WORKSPACE": self._workspace},
+                    env=tool_env,
                     credentials=ctx.credentials if ctx else {},
                 ))
                 output = response.stdout
@@ -142,7 +146,10 @@ class ShellTool(Tool):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
-                    env={**prepend_interpreter_bin(dict(os.environ)), "WORKSPACE": self._workspace},
+                    env=prepend_interpreter_bin(build_exec_env(
+                        credentials=ctx.credentials if ctx else {},
+                        extra=tool_env,
+                    )),
                 )
                 stdout, stderr = await communicate_owned(proc, timeout=timeout)
                 output = stdout.decode(errors="replace")

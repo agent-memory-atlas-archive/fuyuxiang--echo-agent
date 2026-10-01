@@ -424,3 +424,43 @@ class TestSpawnTool:
         event = bus.publish_outbound.call_args[0][0]
         assert "failed" in event.text
         assert "requires approval" in event.text
+
+
+class TestDelegateProgressPublishing:
+    @pytest.mark.asyncio
+    async def test_execute_updates_turn_activity_without_direct_messages(self):
+        from echo_agent.agent.multi_agent.runtime import WorkerProgress
+        from echo_agent.agent.progress_heartbeat import SharedActivityState, friendly_activity
+
+        bus = MagicMock()
+        bus.publish_outbound = AsyncMock(return_value=True)
+        tool = _make_delegate()
+        activity = SharedActivityState(started_at=0.0)
+        activity.enter_tool("delegate_task")
+        tool._executor.run = AsyncMock(return_value=WorkerResult(
+            task_index=0, status="completed", output="done",
+        ))
+        result = await tool.execute({"goal": "research X", "tools": ["search"]}, _ctx(activity=activity))
+        assert result.success is True
+        _, kwargs = tool._executor.run.call_args
+        assert callable(kwargs["on_progress"])
+        kwargs["on_progress"](WorkerProgress(0, "tool", tool_name="read_file"))
+        assert "正在阅读文档" in friendly_activity(activity.snapshot())
+        assert "research X" not in friendly_activity(activity.snapshot())
+        bus.publish_outbound.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_progress_disabled_or_missing_activity_is_silent(self):
+        from echo_agent.agent.progress_heartbeat import SharedActivityState
+
+        tool = _make_delegate(progress_enabled=False)
+        tool._executor.run = AsyncMock(return_value=WorkerResult(
+            task_index=0, status="completed", output="done",
+        ))
+        activity = SharedActivityState(started_at=0.0)
+        activity.enter_tool("delegate_task")
+        result = await tool.execute({"goal": "research X", "tools": ["search"]}, _ctx(activity=activity))
+        assert result.success is True
+        _, kwargs = tool._executor.run.call_args
+        assert kwargs["on_progress"] is None
+        assert activity.worker_note == ""

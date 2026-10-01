@@ -286,9 +286,8 @@ class PromotionGate:
     _MAX_RETAINED_BACKUPS = 10
 
     def _content_threat_scan(self, candidate: SkillCandidate) -> str | None:
-        """Vet candidate content with the same injection/exfiltration scan
-        memory writes get — promoted SKILL.md text is injected into prompts."""
-        from echo_agent.memory.store import scan_text_for_threats
+        """Reject instructions in candidate documentation before promotion."""
+        from echo_agent.memory.store import scan_document_for_threats
 
         for label, text in (
             ("proposed_content", candidate.proposed_content),
@@ -296,7 +295,7 @@ class PromotionGate:
         ):
             if not text:
                 continue
-            error = scan_text_for_threats(text)
+            error, _warnings = scan_document_for_threats(text)
             if error:
                 return f"content scan rejected {label}: {error}"
         return None

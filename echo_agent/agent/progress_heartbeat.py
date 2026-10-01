@@ -22,12 +22,16 @@ _TOOL_FRIENDLY: dict[str, str] = {
     "read_file": "正在阅读文档",
     "filesystem": "正在整理文件",
     "shell": "正在执行命令",
+    "exec": "正在执行命令",
     "code_exec": "正在运行代码",
+    "execute_code": "正在运行代码",
+    "skill_run": "正在运行技能",
     "memory": "正在回忆相关内容",
     "knowledge": "正在检索知识库",
     "vision": "正在查看图片",
     "document": "正在处理文档",
     "delegate": "正在协调子任务",
+    "delegate_task": "正在协调子任务",
 }
 _PHASE_FRIENDLY: dict[str, str] = {
     "thinking": "思考中",
@@ -38,6 +42,8 @@ _FALLBACK_ACTIVITY = "处理中"
 
 def friendly_activity(snapshot: "ActivitySnapshot") -> str:
     if snapshot.phase == "calling_tool" and snapshot.current_tool:
+        if snapshot.current_tool == "delegate_task" and snapshot.worker_note:
+            return snapshot.worker_note
         return _TOOL_FRIENDLY.get(snapshot.current_tool, _FALLBACK_ACTIVITY)
     return _PHASE_FRIENDLY.get(snapshot.phase, _FALLBACK_ACTIVITY)
 
@@ -62,6 +68,7 @@ class ActivitySnapshot:
     phase: str
     current_tool: str | None
     milestone_seq: int = 0
+    worker_note: str = ""
 
 
 @dataclass
@@ -76,6 +83,7 @@ class SharedActivityState:
     last_delivered_milestone: int = 0  # written by delivery layer (manager)
     _first_tool_seen: bool = False
     last_milestone_is_key: bool = False  # current milestone is a key one
+    worker_note: str = ""
 
     def enter_tool(self, name: str) -> None:
         # Only the thinking -> calling_tool transition is a milestone, so a
@@ -86,12 +94,40 @@ class SharedActivityState:
             self.last_milestone_is_key = not self._first_tool_seen
             self._first_tool_seen = True
         self.current_tool = name
+        self.worker_note = ""
         self.phase = "calling_tool"
+
+    def report_worker_progress(
+        self, *, task_index: int, total: int, kind: str,
+        iteration: int = 0, tool_name: str = "",
+    ) -> None:
+        """Fold worker milestones into the turn's throttled heartbeat.
+
+        This only stores a short, safe status. The heartbeat owns transport,
+        channel verbosity, editing, and final-turn sealing.
+        """
+        if self.phase != "calling_tool" or self.current_tool != "delegate_task":
+            return
+        label = f"子任务 {task_index + 1}/{total}"
+        if kind == "started":
+            note = f"{label}已开始"
+        elif kind == "tool":
+            note = f"{label}：{_TOOL_FRIENDLY.get(tool_name, '正在使用工具')}"
+        else:
+            note = f"{label}：正在处理第 {iteration} 步"
+        if note == self.worker_note:
+            return
+        self.worker_note = note
+        self.milestone_seq += 1
+        # Preserve the first visible milestone on plain-text channels; later
+        # updates obey the heartbeat's ordinary interval and verbosity policy.
+        self.last_milestone_is_key = self.last_delivered_milestone == 0
 
     def exit_tool(self) -> None:
         self.milestone_seq += 1
         self.last_milestone_is_key = False
         self.current_tool = None
+        self.worker_note = ""
         self.phase = "thinking"
 
     def set_generating(self) -> None:
@@ -115,6 +151,7 @@ class SharedActivityState:
             phase=self.phase,
             current_tool=self.current_tool,
             milestone_seq=self.milestone_seq,
+            worker_note=self.worker_note,
         )
 
 

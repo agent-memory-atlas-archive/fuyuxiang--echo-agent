@@ -15,7 +15,7 @@ from loguru import logger
 
 from echo_agent.evolution.store import TrajectoryStore
 from echo_agent.evolution.types import SkillCandidate, _now_iso
-from echo_agent.memory.store import scan_text_for_threats
+from echo_agent.memory.store import scan_document_for_threats
 from echo_agent.skills.store import SkillStore
 
 
@@ -102,10 +102,13 @@ class SkillAdmission:
 
     async def admit(self, candidate: SkillCandidate) -> AdmissionResult:
         c = candidate
-        # 1) 注入扫描
+        # 1) SKILL.md is documentation. Reject instructions that try to steer
+        # the agent; stage command-shaped warnings for a human instead of
+        # treating normal install/run examples as prompt injection.
         to_scan = self._scan_text(c)
+        warnings: list[str] = []
         if to_scan:
-            threat = scan_text_for_threats(to_scan)
+            threat, warnings = scan_document_for_threats(to_scan)
             if threat:
                 c.status = "rejected"
                 c.rejected_reason = f"injection scan: {threat}"
@@ -122,12 +125,13 @@ class SkillAdmission:
             diff = self.make_diff("", c.proposed_content, c.skill_name)
 
         # 3) 路由
-        if self._should_write(c):
+        if self._should_write(c) and not warnings:
             try:
                 self._apply(c)
                 c.status = "promoted"
                 c.promotion_status = "active"
                 c.promoted_at = _now_iso()
+                c.rejected_reason = ""
                 await self._candidates.save_candidate(c)
                 logger.info("skill admission written: op={} name={}",
                             c.operation, c.skill_name)
@@ -144,9 +148,13 @@ class SkillAdmission:
 
         c.status = "needs_review"
         c.promotion_status = "staged"
+        reason = "staged for review"
+        if warnings:
+            reason += f": command warnings: {', '.join(warnings)}"
+            c.rejected_reason = reason
         await self._candidates.save_candidate(c)
-        logger.info("skill admission staged: op={} name={}", c.operation, c.skill_name)
-        return AdmissionResult("staged", c.id, "staged for review", diff)
+        logger.info("skill admission staged: op={} name={} warnings={}", c.operation, c.skill_name, warnings)
+        return AdmissionResult("staged", c.id, reason, diff)
 
     async def list_staged(self, *, limit: int = 100) -> list[SkillCandidate]:
         return await self._candidates.list_candidates(
@@ -167,6 +175,7 @@ class SkillAdmission:
         c.status = "promoted"
         c.promotion_status = "active"
         c.promoted_at = _now_iso()
+        c.rejected_reason = ""
         await self._candidates.save_candidate(c)
         logger.info("skill admission approved: name={}", c.skill_name)
         return AdmissionResult("written", candidate_id, "approved and applied")

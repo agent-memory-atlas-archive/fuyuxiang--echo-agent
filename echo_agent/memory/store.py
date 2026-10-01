@@ -68,10 +68,47 @@ _MEMORY_THREAT_PATTERNS = [
     (r"act\s+as\s+(if|though)\s+you\s+(have\s+no|don't\s+have)\s+(restrictions|limits|rules)", "bypass_restrictions"),
     (r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_curl"),
     (r"wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_wget"),
-    (r"cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)", "read_secrets"),
+    # ``cat > file`` / ``cat >> file`` WRITES a credentials file (setup heredocs,
+    # `.npmrc` authoring) — not exfiltration. Only a bare ``cat file`` reads one.
+    (r"\bcat[ \t]+(?![ \t]*(?:>|<<))[^>\n;|&]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)", "read_secrets"),
     (r"authorized_keys", "ssh_backdoor"),
     (r"\$HOME/\.ssh|\~/\.ssh", "ssh_access"),
     (r"\$HOME/\.echo-agent|\~/\.echo-agent", "agent_secret_path"),
+    # ── Exfiltration: credential-store access ──
+    # A skill's documentation honestly spells these paths (config lives there,
+    # or an API call sends the service's own key) — command-shaped, so they
+    # downgrade to a warning in documents and stay fatal for memory assertions.
+    (r"\$HOME/\.aws|\~/\.aws", "aws_dir_access"),
+    (r"\$HOME/\.kube|\~/\.kube", "kube_dir_access"),
+    (r"\$HOME/\.gnupg|\~/\.gnupg", "gnupg_dir_access"),
+    (r"\$HOME/\.docker|\~/\.docker", "docker_dir_access"),
+    (r"printenv|env\s*\|", "dump_all_env"),
+    (r"(?m)^[^#\n]*os\.environ\b(?!\s*\.get\s*\()", "python_os_environ"),
+    (r"base64[^\n]*env", "encoded_exfil"),
+    # ── Supply chain: download-and-execute / unpinned installs ──
+    (r"curl\s+[^\n]*\|\s*(bash|sh|zsh)", "curl_pipe_shell"),
+    (r"wget\s+[^\n]*-[qO]*O?[^|]*\|\s*(bash|sh|zsh)", "wget_pipe_shell"),
+    (r"curl\s+[^\n]*\|\s*python", "curl_pipe_python"),
+    (r"pip\s+install\s+(?!-r\s)(?!.*==)", "unpinned_pip_install"),
+    (r"npm\s+install\s+(?!.*@\d)", "unpinned_npm_install"),
+    (r"\buv\s+run\s+", "uv_run"),
+    # ── Destructive operations ──
+    # Root-level ``rm -rf /`` is already blocked by the shell tool's built-in
+    # patterns and the exec approval gate; here we only flag the shapes that
+    # slip past a path-policy check — home-dir recursion and Python rmtree.
+    (r"chmod\s+777", "insecure_perms"),
+    (r"\bmkfs(?:\.\w+)?\b", "format_filesystem"),
+    (r"\bdd\s+[^\n;|&]*\bof=/dev/", "disk_overwrite"),
+    (r"truncate\s+-s\s*0\s+/", "truncate_system"),
+    (r"rm\s+(-[^\s]*)?r.*(?:\$HOME|~[/\s*]|~$)", "destructive_home_rm"),
+    (r"shutil\.rmtree\s*\(\s*['\"/]", "python_rmtree"),
+    # ── Persistence ──
+    (r"\bcrontab\b", "persistence_cron"),
+    (r"\.(bashrc|zshrc|bash_profile|bash_login|zprofile|zlogin)\b", "shell_rc_mod"),
+    (r"\bssh-keygen\b", "ssh_keygen"),
+    # ── Obfuscation ──
+    (r"chr\s*\(\s*\d+\s*\)\s*\+\s*chr\s*\(\s*\d+", "chr_building"),
+    (r"\[::-1\]", "string_reversal"),
     (r"忽略.{0,6}(之前|以上|所有|先前).{0,4}(指令|指示|规则|要求)", "prompt_injection_zh"),
     (r"你现在是", "role_hijack_zh"),
     (r"不要告诉用户", "deception_hide_zh"),
@@ -154,6 +191,33 @@ COMMAND_SHAPED_THREAT_IDS: frozenset[str] = frozenset({
     "exfil_curl",
     "exfil_wget",
     "read_secrets",
+    # Expanded ruleset: credential-store paths, download-and-execute, unpinned
+    # installs, destructive ops, persistence, obfuscation. All command-shaped —
+    # alarming as a memory assertion, frequently honest in documentation.
+    "aws_dir_access",
+    "kube_dir_access",
+    "gnupg_dir_access",
+    "docker_dir_access",
+    "dump_all_env",
+    "python_os_environ",
+    "encoded_exfil",
+    "curl_pipe_shell",
+    "wget_pipe_shell",
+    "curl_pipe_python",
+    "unpinned_pip_install",
+    "unpinned_npm_install",
+    "uv_run",
+    "insecure_perms",
+    "format_filesystem",
+    "disk_overwrite",
+    "truncate_system",
+    "destructive_home_rm",
+    "python_rmtree",
+    "persistence_cron",
+    "shell_rc_mod",
+    "ssh_keygen",
+    "chr_building",
+    "string_reversal",
 })
 
 
@@ -162,9 +226,9 @@ def scan_text_for_threats(
 ) -> str | None:
     """Public entry point for the prompt-injection/exfiltration scan.
 
-    Used by other subsystems whose output is injected into prompts (e.g. the
-    evolution gate vetting candidate skill content) so they get the same
-    protections as memory writes.
+    Used for short memory-like assertions injected into prompts. Documentation
+    such as SKILL.md must use ``scan_document_for_threats`` so command examples
+    are treated as warnings rather than instructions.
 
     ``exclude_threat_ids`` drops specific patterns; ``scan_document_for_threats``
     is the right entry point for documentation and uses it appropriately.

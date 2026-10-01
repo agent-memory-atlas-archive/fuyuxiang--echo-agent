@@ -78,6 +78,24 @@ async def test_injection_rejected(parts):
 
 
 @pytest.mark.asyncio
+async def test_install_example_is_staged_for_review_and_can_be_approved(parts):
+    sstore, cstore, _ = parts
+    c = _create_candidate()
+    c.proposed_content += "\n## Install\n```bash\npip install python-pptx\n```\n"
+    adm = SkillAdmission(skill_store=sstore, candidate_store=cstore,
+                         policy="auto_write", auto_write_risk="high")
+    res = await adm.admit(c)
+    assert res.outcome == "staged"
+    assert "unpinned_pip_install" in res.message
+    assert sstore.read_skill(c.skill_name) is None
+    approved = await adm.approve(c.id)
+    assert approved.outcome == "written"
+    assert "pip install python-pptx" in sstore.read_skill(c.skill_name)
+    promoted = await cstore.get_candidate(c.id)
+    assert promoted.rejected_reason == ""
+
+
+@pytest.mark.asyncio
 async def test_approve_staged_writes_it(parts):
     sstore, cstore, _ = parts
     adm = SkillAdmission(skill_store=sstore, candidate_store=cstore,

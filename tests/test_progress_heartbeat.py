@@ -108,6 +108,42 @@ def test_render_heartbeat_fills_template():
     assert text == "⏳ 正在处理中… 已用时 2 分钟（正在阅读文档）"
 
 
+def test_worker_milestones_use_safe_text_and_existing_throttle():
+    st = SharedActivityState(started_at=0.0)
+    st.enter_tool("delegate_task")
+    st.report_worker_progress(task_index=0, total=2, kind="started")
+    st.report_worker_progress(task_index=0, total=2, kind="tool", tool_name="read_file")
+    assert "子任务 1/2" in friendly_activity(st.snapshot())
+    assert "正在阅读文档" in friendly_activity(st.snapshot())
+
+    hb = ProgressHeartbeat(_MsBus(), _MsEvent(), _ThrottleCfg())
+    assert hb._should_beat(st) is True  # first milestone stays visible
+    st.last_delivered_milestone = st.milestone_seq
+    st.mark_visible_feedback()
+    st.report_worker_progress(task_index=1, total=2, kind="iteration", iteration=2)
+    assert st.last_milestone_is_key is False
+    assert hb._should_beat(st) is False  # later updates obey interval
+    st.exit_tool()
+    assert st.worker_note == ""
+
+
+@pytest.mark.asyncio
+async def test_worker_progress_uses_heartbeat_envelope():
+    bus = _FakeBus()
+    event = _event()
+    hb = ProgressHeartbeat(bus, event, _cfg(first_delay_sec=0))
+    activity = SharedActivityState(started_at=time.monotonic())
+    activity.enter_tool("delegate_task")
+    activity.report_worker_progress(task_index=0, total=1, kind="tool", tool_name="search")
+    await hb.start(activity)
+    await asyncio.sleep(0.05)
+    await hb.stop()
+    assert len(bus.events) == 1
+    assert bus.events[0].message_kind == "heartbeat"
+    assert bus.events[0].metadata["_inbound_event_id"] == event.event_id
+    assert "子任务 1/1" in bus.events[0].text
+
+
 class _FakeBus:
     def __init__(self):
         self.events = []
@@ -383,4 +419,3 @@ async def test_run_loop_advances_source_gate_no_rebeat():
     await hb.stop()
     assert len(bus.published) == 1  # exactly one beat, not one-per-tick
     assert st.last_delivered_milestone == 1
-

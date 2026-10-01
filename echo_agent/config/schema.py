@@ -8,6 +8,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
+from echo_agent.security.exec_env import valid_env_name
+
 
 class _Base(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
@@ -1168,6 +1170,22 @@ class ExecToolConfig(_Base):
             "desc_en": "Host environment in which commands execute",
         },
     )
+    env_allowlist: list[str] = Field(
+        default_factory=list,
+        json_schema_extra={
+            "status": "effective", "ref": "agent/tools/__init__.py",
+            "desc_zh": "显式传给 exec、execute_code 和 process 的本机环境变量名",
+            "desc_en": "Ambient variable names explicitly passed to exec, execute_code and process",
+        },
+    )
+
+    @field_validator("env_allowlist")
+    @classmethod
+    def _validate_env_allowlist(cls, names: list[str]) -> list[str]:
+        for name in names:
+            if not valid_env_name(name):
+                raise ValueError(f"Invalid environment variable name: {name!r}")
+        return list(dict.fromkeys(names))
     security: Literal["deny", "allowlist", "full"] = Field(
         default="allowlist",
         json_schema_extra={

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from echo_agent.memory.store import scan_text_for_threats
+from echo_agent.memory.store import scan_document_for_threats
 from echo_agent.models.provider import LLMProvider
 from echo_agent.skills.store import SkillStore
 
@@ -169,11 +169,18 @@ class SkillReviewer:
         # treats reviewer-written skills as a tool-boundary that needs vetting.)
         to_scan = " ".join(str(params.get(k, "")) for k in ("content", "new_text"))
         if to_scan.strip():
-            threat = scan_text_for_threats(to_scan)
+            threat, warnings = scan_document_for_threats(to_scan)
             if threat:
                 logger.warning("skill review blocked: action={} name={} reason={}",
                                action, skill_name, threat)
                 return f"Error: blocked by injection scan: {threat}"
+            if warnings:
+                # Admission stages these for review when available. The
+                # storage-free reviewer retains its existing direct-write
+                # behavior; command examples in documentation are not commands
+                # executed by this path.
+                logger.warning("skill review command warnings: action={} name={} warnings={}",
+                               action, skill_name, warnings)
 
         # Audit log fires only after a store call succeeds, with the real action
         # name — blocked, empty-content, and unknown-action turns must not leave

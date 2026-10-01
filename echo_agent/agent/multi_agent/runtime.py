@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
@@ -15,6 +16,20 @@ from echo_agent.models.provider import LLMProvider, ToolCallRequest
 
 
 ToolExecutorFn = Callable[[str, ToolCallRequest, int], Awaitable[WorkerToolOutcome | str]]
+
+
+@dataclass(frozen=True)
+class WorkerProgress:
+    """A safe, structured milestone; raw worker goals never enter user feedback."""
+
+    task_index: int
+    kind: str  # started | iteration | tool
+    iteration: int = 0
+    max_iterations: int = 0
+    tool_name: str = ""
+
+
+ProgressCallback = Callable[[WorkerProgress], None]
 
 
 def _as_outcome(raw: WorkerToolOutcome | str) -> WorkerToolOutcome:
@@ -58,8 +73,14 @@ class WorkerExecutor:
         temperature: float = 0.4,
         model: str = "",
         timeout_seconds: float = 300.0,
+        on_progress: ProgressCallback | None = None,
     ) -> WorkerResult:
-        """Run a worker agent loop until completion or limits reached."""
+        """Run a worker agent loop until completion or limits reached.
+
+        ``on_progress`` receives synchronous milestones so a slow chat transport
+        cannot consume the worker's timeout or delay its tool calls. A sink's
+        exception is swallowed.
+        """
         started = time.monotonic()
 
         effective_model = model or (profile.model if profile else "") or self._default_model
@@ -81,6 +102,8 @@ class WorkerExecutor:
 
         state = {"iterations": 0, "tool_calls": 0, "last_content": "", "last_tool_error": ""}
 
+        self._notify(on_progress, WorkerProgress(task_index, "started"))
+
         try:
             result = await asyncio.wait_for(
                 self._run_loop(
@@ -92,6 +115,8 @@ class WorkerExecutor:
                     max_tokens=effective_max_tokens,
                     temperature=effective_temp,
                     state=state,
+                    on_progress=on_progress,
+                    task_index=task_index,
                 ),
                 timeout=timeout_seconds,
             )
@@ -130,6 +155,19 @@ class WorkerExecutor:
 
     _MAX_MESSAGES = 200
 
+    @staticmethod
+    def _notify(
+        on_progress: ProgressCallback | None, progress: WorkerProgress,
+    ) -> None:
+        """Record a milestone without involving a network await."""
+        if on_progress is None:
+            return
+        try:
+            on_progress(progress)
+        except Exception as e:  # noqa: BLE001 — a progress sink must not kill a run
+            logger.debug("worker progress sink failed: {}", e)
+
+
     # Mirrors the top-level agent loop (pipeline/inference_stage.py): the Nth
     # identical call is short-circuited rather than executed again.
     _REPEAT_BLOCK_THRESHOLD = 4
@@ -158,12 +196,19 @@ class WorkerExecutor:
         max_tokens: int,
         temperature: float,
         state: dict[str, Any],
+        on_progress: ProgressCallback | None = None,
+        task_index: int = 0,
     ) -> dict[str, Any]:
         repeat_tracker: dict[str, int] = {}
         consecutive_failures = 0
 
         for iteration in range(max_iterations):
             state["iterations"] = iteration + 1
+
+            self._notify(on_progress, WorkerProgress(
+                task_index, "iteration", iteration=state["iterations"],
+                max_iterations=max_iterations,
+            ))
 
             if len(messages) > self._MAX_MESSAGES:
                 system_msg = messages[0]
@@ -205,6 +250,11 @@ class WorkerExecutor:
 
             for idx, tc in enumerate(response.tool_calls):
                 state["tool_calls"] += 1
+
+                self._notify(on_progress, WorkerProgress(
+                    task_index, "tool", iteration=state["iterations"],
+                    max_iterations=max_iterations, tool_name=tc.name,
+                ))
 
                 # Repeat guard: count BEFORE executing so identical calls stop
                 # firing side effects. A blocked call counts as a failure so a
